@@ -14,6 +14,7 @@ function createWindow() {
     minHeight: 600,
     title: 'Mine Explorer 3D',
     backgroundColor: '#0a0a0f',
+    autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
