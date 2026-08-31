@@ -1,0 +1,26 @@
+bash /home/ghost/Documents/Minecraft/scripts/start_all.sh
+
+para apagar todo:
+bash /home/ghost/Documents/Minecraft/scripts/stop_all.sh
+
+
+
+Despues de encender, abre en el navegador:
+- Visor 3D: http://127.0.0.1:8000/static/viewer.html
+- Swagger: http://127.0.0.1:8000/docs
+
+
+
+
+Primero enciende el backend:
+bash /home/ghost/Documents/Minecraft/scripts/start_all.sh
+Despues abre la app de escritorio:
+cd /home/ghost/Documents/Minecraft/electron-app && npm start
+
+
+
+
+cd /home/ghost/Documents/Minecraft/backend
+./.venv/bin/python gen_fake_cave.py --mission-id 1 --type maze --seed 10
+./.venv/bin/python gen_fake_cave.py --mission-id 2 --type vdrop --seed 20
+./.venv/bin/python gen_fake_cave.py --mission-id 3 --type cave --seed 42

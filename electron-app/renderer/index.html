@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net;">
+<title>Mine Explorer 3D</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0a0a0f; overflow: hidden; font-family: 'Segoe UI', monospace; color: #ccc; }
+
+  #titlebar {
+    height: 32px; background: #111; display: flex; align-items: center;
+    padding: 0 12px; -webkit-app-region: drag; border-bottom: 1px solid #222;
+    font-size: 12px; color: #888;
+  }
+  #titlebar .title { color: #4af; font-weight: bold; margin-right: 12px; }
+
+  #info {
+    position: absolute; top: 42px; left: 10px; z-index: 10;
+    background: rgba(0,0,0,0.8); padding: 12px 16px; border-radius: 6px;
+    border: 1px solid #333; max-width: 320px;
+  }
+  #info h2 { color: #4af; font-size: 14px; margin-bottom: 6px; }
+  #info p { font-size: 11px; line-height: 1.5; }
+  #info .stat { color: #8f8; font-size: 13px; }
+
+  #legend {
+    position: absolute; bottom: 10px; left: 10px; z-index: 10;
+    background: rgba(0,0,0,0.8); padding: 10px 14px; border-radius: 6px;
+    border: 1px solid #333;
+  }
+  #legend h3 { color: #4af; font-size: 12px; margin-bottom: 6px; }
+  #legend .item { display: flex; align-items: center; margin: 3px 0; font-size: 11px; }
+  #legend .swatch { width: 12px; height: 12px; border-radius: 2px; margin-right: 8px; border: 1px solid #555; }
+
+  #controls {
+    position: absolute; top: 42px; right: 10px; z-index: 10;
+    background: rgba(0,0,0,0.8); padding: 12px 16px; border-radius: 6px;
+    border: 1px solid #333;
+  }
+  #controls label { font-size: 11px; display: block; margin: 4px 0; }
+  #controls input, #controls select, #controls button {
+    background: #222; color: #ccc; border: 1px solid #555;
+    padding: 4px 8px; border-radius: 3px; font-family: monospace; font-size: 11px;
+  }
+  #controls button { cursor: pointer; margin-top: 6px; padding: 6px 14px; }
+  #controls button:hover { background: #333; border-color: #4af; color: #fff; }
+  #controls button.primary { background: #1a3a5c; border-color: #4af; }
+
+  #loading {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    z-index: 20; text-align: center;
+    background: rgba(10,10,20,0.95); padding: 30px 40px; border-radius: 10px;
+    border: 1px solid #333;
+  }
+  #loading h3 { color: #4af; font-size: 16px; margin-bottom: 8px; }
+  #loading p { font-size: 12px; color: #888; }
+  #loading .error { color: #f44; margin-top: 10px; font-size: 12px; }
+  #loading .ok { color: #4f4; }
+  #loading .spinner {
+    width: 30px; height: 30px; border: 3px solid #222; border-top-color: #4af;
+    border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 12px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  #backend-status {
+    position: absolute; bottom: 10px; right: 10px; z-index: 10;
+    font-size: 10px; padding: 4px 10px; border-radius: 4px;
+    background: rgba(0,0,0,0.6);
+  }
+  #backend-status.online { color: #4f4; border: 1px solid #2a4a2a; }
+  #backend-status.offline { color: #f44; border: 1px solid #4a2a2a; }
+
+  canvas { display: block; }
+</style>
+</head>
+<body>
+
+<div id="titlebar">
+  <span class="title">MINE EXPLORER</span>
+  <span>Exploracion Autonoma de Minas Subterraneas - Visor 3D</span>
+</div>
+
+<div id="info">
+  <h2>Mapa Volumetrico</h2>
+  <p>Cueva simulada con cellular automata.<br>
+  Arrastra = rotar | Scroll = zoom | Click derecho = pan</p>
+  <p id="stats"></p>
+</div>
+
+<div id="legend">
+  <h3>Riesgo</h3>
+  <div class="item"><div class="swatch" style="background:#4a4"></div> 0 - Seguro</div>
+  <div class="item"><div class="swatch" style="background:#da0"></div> 1 - Medio</div>
+  <div class="item"><div class="swatch" style="background:#f42"></div> 2 - Alto</div>
+  <div class="item"><div class="swatch" style="background:#a4a"></div> 3 - Escombros</div>
+  <h3 style="margin-top:8px">Estado</h3>
+  <div class="item"><div class="swatch" style="background:#fff; opacity:0.4"></div> Sin explorar</div>
+  <div class="item"><div class="swatch" style="background:#fff; opacity:1.0"></div> Explorado</div>
+  <div class="item"><div class="swatch" style="background:#555"></div> Bloqueado</div>
+</div>
+
+<div id="controls">
+  <label>Mision:
+    <select id="missionId">
+      <option value="3" selected>Mision 3 - cueva fake</option>
+    </select>
+  </label>
+  <label>Voxel size: <input id="voxelSize" type="range" min="0.2" max="2.0" step="0.05" value="0.9"></label>
+  <label><input id="showSolid" type="checkbox"> Mostrar paredes</label>
+  <label><input id="showGrid" type="checkbox" checked> Mostrar grid</label>
+  <button class="primary" onclick="loadMap()">Cargar mapa</button>
+</div>
+
+<div id="backend-status" class="offline">Backend: verificando...</div>
+
+<div id="loading">
+  <div class="spinner"></div>
+  <h3>Iniciando Mine Explorer...</h3>
+  <p id="loadDetail">Verificando conexion con el backend...</p>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const loadingEl = document.getElementById('loading');
+const loadDetail = document.getElementById('loadDetail');
+const statsEl = document.getElementById('stats');
+const statusEl = document.getElementById('backend-status');
+
+// Verificar backend
+async function checkBackend() {
+  try {
+    const result = await window.electronAPI.checkBackend();
+    if (result.ok) {
+      statusEl.textContent = 'Backend: ONLINE';
+      statusEl.className = 'online';
+      return true;
+    }
+  } catch {}
+  statusEl.textContent = 'Backend: OFFLINE - Ejecuta start_all.sh';
+  statusEl.className = 'offline';
+  return false;
+}
+
+async function apiFetch(endpoint, options) {
+  return window.electronAPI.fetchBackend(endpoint, options);
+}
+
+// --- Three.js ---
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0a0a0f);
+scene.fog = new THREE.FogExp2(0x0a0a0f, 0.002);
+
+const camera = new THREE.PerspectiveCamera(60, innerWidth / (innerHeight - 32), 0.1, 600);
+camera.position.set(50, 40, 50);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight - 32);
+renderer.setPixelRatio(devicePixelRatio);
+document.body.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.target.set(32, 16, 32);
+
+// Luces
+scene.add(new THREE.AmbientLight(0x505060, 1.0));
+const dir = new THREE.DirectionalLight(0xffffff, 1.2);
+dir.position.set(60, 100, 60);
+scene.add(dir);
+const point = new THREE.PointLight(0x4488ff, 0.6, 150);
+point.position.set(32, 25, 32);
+scene.add(point);
+
+// Grid
+const gridHelper = new THREE.GridHelper(100, 50, 0x222233, 0x111122);
+gridHelper.position.y = -0.5;
+scene.add(gridHelper);
+
+// Colores
+const RISK_COLORS = { 0: 0x44aa44, 1: 0xddaa00, 2: 0xff4422, 3: 0xaa44aa };
+const STATE_OPACITY = { 0: 0.3, 1: 1.0, 2: 0.5 };
+
+let voxelGroup = new THREE.Group();
+scene.add(voxelGroup);
+let voxelData = [];
+const dummy = new THREE.Object3D();
+const boxGeo = new THREE.BoxGeometry(1, 1, 1);
+
+function buildMesh(showSolid) {
+  scene.remove(voxelGroup);
+  voxelGroup = new THREE.Group();
+  scene.add(voxelGroup);
+
+  const filtered = showSolid ? voxelData : voxelData.filter(v => v.state !== 2);
+  if (!filtered.length) {
+    loadingEl.innerHTML = '<h3>Sin voxeles</h3><p>No hay datos para esta mision.</p>';
+    return;
+  }
+
+  const groups = {};
+  for (const v of filtered) {
+    const key = v.risk + '_' + v.state;
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(v);
+  }
+
+  let total = 0;
+  for (const [key, items] of Object.entries(groups)) {
+    const [risk, state] = key.split('_').map(Number);
+    const mat = new THREE.MeshLambertMaterial({
+      color: RISK_COLORS[risk] ?? 0x888888,
+      transparent: STATE_OPACITY[state] < 1,
+      opacity: STATE_OPACITY[state] ?? 0.5,
+    });
+    const im = new THREE.InstancedMesh(boxGeo, mat, items.length);
+    for (let i = 0; i < items.length; i++) {
+      dummy.position.set(items[i].pos.x, items[i].pos.y, items[i].pos.z);
+      dummy.updateMatrix();
+      im.setMatrixAt(i, dummy.matrix);
+    }
+    im.instanceMatrix.needsUpdate = true;
+    voxelGroup.add(im);
+    total += items.length;
+  }
+
+  // Centrar camara
+  let minX=Infinity,minY=Infinity,minZ=Infinity,maxX=-Infinity,maxY=-Infinity,maxZ=-Infinity;
+  for (const v of filtered) {
+    if(v.pos.x<minX)minX=v.pos.x; if(v.pos.y<minY)minY=v.pos.y; if(v.pos.z<minZ)minZ=v.pos.z;
+    if(v.pos.x>maxX)maxX=v.pos.x; if(v.pos.y>maxY)maxY=v.pos.y; if(v.pos.z>maxZ)maxZ=v.pos.z;
+  }
+  controls.target.set((minX+maxX)/2,(minY+maxY)/2,(minZ+maxZ)/2);
+  camera.position.set((minX+maxX)/2+30, (minY+maxY)/2+25, (minZ+maxZ)/2+30);
+
+  loadingEl.style.display = 'none';
+  statsEl.innerHTML = '<span class="stat">'+total+'</span> voxels cargados<br>' +
+    'X['+minX+'..'+maxX+'] Y['+minY+'..'+maxY+'] Z['+minZ+'..'+maxZ+']';
+}
+
+window.loadMap = async function() {
+  const mid = document.getElementById('missionId').value;
+  const showSolid = document.getElementById('showSolid').checked;
+
+  loadingEl.style.display = 'block';
+  loadingEl.innerHTML = '<div class="spinner"></div><h3>Cargando mision '+mid+'</h3>';
+
+  try {
+    const result = await apiFetch('/missions/' + mid + '/map');
+    if (result.status !== 200) throw new Error('HTTP ' + result.status);
+    voxelData = result.data.voxels || [];
+    loadDetail.textContent = voxelData.length + ' voxels recibidos...';
+    buildMesh(showSolid);
+  } catch (e) {
+    loadingEl.innerHTML = '<h3>Error</h3><p class="error">'+e.message+'</p>';
+  }
+};
+
+// Cargar lista de misiones
+async function loadMissionList() {
+  try {
+    const result = await apiFetch('/missions');
+    if (result.status === 200 && Array.isArray(result.data)) {
+      const select = document.getElementById('missionId');
+      select.innerHTML = '';
+      for (const m of result.data) {
+        const opt = document.createElement('option');
+        opt.value = m.id;
+        opt.textContent = 'Mision ' + m.id + ' - ' + m.name + ' (' + m.status + ')';
+        select.appendChild(opt);
+      }
+    }
+  } catch {}
+}
+
+// Controles
+document.getElementById('showSolid').addEventListener('change', () => {
+  if (voxelData.length) buildMesh(document.getElementById('showSolid').checked);
+});
+
+document.getElementById('showGrid').addEventListener('change', (e) => {
+  gridHelper.visible = e.target.checked;
+});
+
+document.getElementById('voxelSize').addEventListener('input', (e) => {
+  const s = parseFloat(e.target.value);
+  voxelGroup.children.forEach(m => m.scale.set(s, s, s));
+});
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / (innerHeight - 32);
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight - 32);
+});
+
+(function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+})();
+
+// Init
+const backendOk = await checkBackend();
+if (backendOk) {
+  await loadMissionList();
+  await window.loadMap();
+} else {
+  loadingEl.innerHTML = '<h3>Backend offline</h3>' +
+    '<p>El servidor FastAPI no esta corriendo.</p>' +
+    '<p style="margin-top:8px;color:#888">Ejecuta:<br><code style="color:#4af">bash scripts/start_all.sh</code></p>';
+}
+</script>
+</body>
+</html>

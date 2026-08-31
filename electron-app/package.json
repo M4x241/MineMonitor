@@ -1,0 +1,13 @@
+{
+  "name": "mine-explorer-3d",
+  "version": "1.0.0",
+  "description": "Visor 3D de cuevas - Exploracion Autonoma de Minas",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0"
+  }
+}

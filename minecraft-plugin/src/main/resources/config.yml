@@ -1,0 +1,7 @@
+# Configuración del simulador de minas (MineExplorer)
+ws-port: 8765
+seed: "1704"
+region-half: 48
+start-x: 0
+start-z: 0
+start-y: 54

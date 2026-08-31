@@ -1,0 +1,69 @@
+# ── Python ────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+*.db
+*.sqlite3
+backend/data/
+*.egg-info/
+.pytest_cache/
+
+# ── Node / Electron ───────────────────────────────────────
+node_modules/
+dist/
+out/
+build/
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+
+# ── Minecraft Paper server (runtime descargado/generado) ──
+server/paper.jar
+server/cache/
+server/versions/
+server/libraries/
+server/logs/
+server/world/
+server/world_nether/
+server/world_the_end/
+server/mine/
+server/plugins/
+server/banned-players.json
+server/banned-ips.json
+server/ops.json
+server/usercache.json
+server/whitelist.json
+server/spigot.yml
+server/server.properties
+server/bukkit.yml
+server/paper-global.yml
+server/paper-world-defaults.yml
+server/pufferfish.yml
+server/panorama*/
+server/*.jfr
+server/spark/
+server/eula.txt
+server/.paper/
+server/config/
+server/permissions.json
+server/commands.yml
+server/help.yml
+
+# ── Gradle / Java (minecraft-plugin) ──────────────────────
+minecraft-plugin/build/
+minecraft-plugin/.gradle/
+minecraft-plugin/bin/
+*.class
+*.jar
+
+# ── IDEs ──────────────────────────────────────────────────
+.idea/
+.vscode/
+*.iml
+
+# ── Otros ─────────────────────────────────────────────────
+*.tmp
+*.jfr.tmp

@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Mine Explorer 3D Viewer</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0a0a0f; overflow: hidden; font-family: monospace; color: #ccc; }
+  #info {
+    position: absolute; top: 10px; left: 10px; z-index: 10;
+    background: rgba(0,0,0,0.8); padding: 12px 16px; border-radius: 6px;
+    border: 1px solid #333; max-width: 320px;
+  }
+  #info h2 { color: #4af; font-size: 14px; margin-bottom: 6px; }
+  #info p { font-size: 11px; line-height: 1.5; }
+  #info .stat { color: #8f8; }
+  #legend {
+    position: absolute; bottom: 10px; left: 10px; z-index: 10;
+    background: rgba(0,0,0,0.8); padding: 10px 14px; border-radius: 6px;
+    border: 1px solid #333;
+  }
+  #legend h3 { color: #4af; font-size: 12px; margin-bottom: 6px; }
+  #legend .item { display: flex; align-items: center; margin: 3px 0; font-size: 11px; }
+  #legend .swatch { width: 12px; height: 12px; border-radius: 2px; margin-right: 8px; border: 1px solid #555; }
+  #controls {
+    position: absolute; top: 10px; right: 10px; z-index: 10;
+    background: rgba(0,0,0,0.8); padding: 12px 16px; border-radius: 6px;
+    border: 1px solid #333;
+  }
+  #controls label { font-size: 11px; display: block; margin: 4px 0; }
+  #controls input, #controls button {
+    background: #222; color: #ccc; border: 1px solid #555;
+    padding: 4px 8px; border-radius: 3px; font-family: monospace; font-size: 11px;
+  }
+  #controls button { cursor: pointer; margin-top: 6px; }
+  #controls button:hover { background: #333; border-color: #4af; }
+  #loading {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    z-index: 20; font-size: 14px; color: #4af; text-align: center;
+    background: rgba(0,0,0,0.8); padding: 20px 30px; border-radius: 8px;
+    border: 1px solid #333;
+  }
+  #loading .error { color: #f44; margin-top: 8px; }
+  #loading .ok { color: #4f4; }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+
+<div id="info">
+  <h2>Mine Explorer 3D</h2>
+  <p>Mapa volumetrico de cueva simulada.<br>
+  Arrastrar = rotar | Scroll = zoom | Click derecho = pan</p>
+  <p id="stats"></p>
+</div>
+
+<div id="legend">
+  <h3>Riesgo</h3>
+  <div class="item"><div class="swatch" style="background:#4a4"></div> 0 - Seguro</div>
+  <div class="item"><div class="swatch" style="background:#da0"></div> 1 - Medio</div>
+  <div class="item"><div class="swatch" style="background:#f42"></div> 2 - Alto</div>
+  <div class="item"><div class="swatch" style="background:#a4a"></div> 3 - Escombros</div>
+  <h3 style="margin-top:8px">Estado</h3>
+  <div class="item"><div class="swatch" style="background:#fff; opacity:0.4"></div> Sin explorar</div>
+  <div class="item"><div class="swatch" style="background:#fff; opacity:1.0"></div> Explorado</div>
+  <div class="item"><div class="swatch" style="background:#555"></div> Bloqueado</div>
+</div>
+
+<div id="controls">
+  <label>Mision ID: <input id="missionId" type="number" value="3" min="1"></label>
+  <label>Voxel size: <input id="voxelSize" type="range" min="0.3" max="1.5" step="0.05" value="0.9"></label>
+  <label><input id="showSolid" type="checkbox"> Mostrar paredes</label>
+  <button onclick="loadMap()">Cargar mapa</button>
+</div>
+
+<div id="loading">
+  <div>Cargando mapa 3D...</div>
+  <div id="loadDetail" style="font-size:11px;margin-top:6px;color:#888"></div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const loadingEl = document.getElementById('loading');
+const loadDetail = document.getElementById('loadDetail');
+const statsEl = document.getElementById('stats');
+
+function setLoading(msg, cls) {
+  loadDetail.textContent = msg;
+  loadDetail.className = cls || '';
+}
+
+function showError(msg) {
+  loadingEl.innerHTML = '<div class="error">Error: ' + msg + '</div>' +
+    '<div style="font-size:11px;margin-top:8px;color:#888">Revisa la consola del navegador (F12)</div>';
+}
+
+try {
+  setLoading('Three.js cargado OK', 'ok');
+
+  // Escena
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x0a0a0f);
+  scene.fog = new THREE.FogExp2(0x0a0a0f, 0.003);
+
+  const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 500);
+  camera.position.set(40, 30, 40);
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.setPixelRatio(devicePixelRatio);
+  document.body.appendChild(renderer.domElement);
+
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.08;
+  controls.target.set(32, 16, 32);
+
+  // Luces
+  scene.add(new THREE.AmbientLight(0x404050, 0.8));
+  const dir = new THREE.DirectionalLight(0xffffff, 1.0);
+  dir.position.set(50, 80, 50);
+  scene.add(dir);
+  const point = new THREE.PointLight(0x4488ff, 0.5, 100);
+  point.position.set(32, 20, 32);
+  scene.add(point);
+
+  // Grid
+  const grid = new THREE.GridHelper(80, 40, 0x222233, 0x111122);
+  grid.position.y = -0.5;
+  scene.add(grid);
+
+  // Colores
+  const RISK_COLORS = { 0: 0x44aa44, 1: 0xddaa00, 2: 0xff4422, 3: 0xaa44aa };
+  const STATE_OPACITY = { 0: 0.35, 1: 1.0, 2: 0.6 };
+
+  let voxelGroup = new THREE.Group();
+  scene.add(voxelGroup);
+  let voxelData = [];
+  const dummy = new THREE.Object3D();
+  const boxGeo = new THREE.BoxGeometry(1, 1, 1);
+
+  function buildMesh(showSolid) {
+    scene.remove(voxelGroup);
+    voxelGroup = new THREE.Group();
+    scene.add(voxelGroup);
+
+    const filtered = showSolid ? voxelData : voxelData.filter(v => v.state !== 2);
+    if (!filtered.length) {
+      loadingEl.innerHTML = '<div>Sin voxeles para esta mision</div>';
+      return;
+    }
+
+    const groups = {};
+    for (const v of filtered) {
+      const key = v.risk + '_' + v.state;
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(v);
+    }
+
+    let total = 0;
+    for (const [key, items] of Object.entries(groups)) {
+      const [risk, state] = key.split('_').map(Number);
+      const mat = new THREE.MeshLambertMaterial({
+        color: RISK_COLORS[risk] ?? 0x888888,
+        transparent: STATE_OPACITY[state] < 1,
+        opacity: STATE_OPACITY[state] ?? 0.5,
+      });
+      const im = new THREE.InstancedMesh(boxGeo, mat, items.length);
+      for (let i = 0; i < items.length; i++) {
+        dummy.position.set(items[i].pos.x, items[i].pos.y, items[i].pos.z);
+        dummy.updateMatrix();
+        im.setMatrixAt(i, dummy.matrix);
+      }
+      im.instanceMatrix.needsUpdate = true;
+      voxelGroup.add(im);
+      total += items.length;
+    }
+
+    // Centrar camara
+    let minX=Infinity,minY=Infinity,minZ=Infinity,maxX=-Infinity,maxY=-Infinity,maxZ=-Infinity;
+    for (const v of filtered) {
+      if(v.pos.x<minX)minX=v.pos.x; if(v.pos.y<minY)minY=v.pos.y; if(v.pos.z<minZ)minZ=v.pos.z;
+      if(v.pos.x>maxX)maxX=v.pos.x; if(v.pos.y>maxY)maxY=v.pos.y; if(v.pos.z>maxZ)maxZ=v.pos.z;
+    }
+    controls.target.set((minX+maxX)/2,(minY+maxY)/2,(minZ+maxZ)/2);
+
+    loadingEl.style.display = 'none';
+    statsEl.innerHTML = '<span class="stat">'+total+'</span> voxels cargados<br>' +
+      'X['+minX+'..'+maxX+'] Y['+minY+'..'+maxY+'] Z['+minZ+'..'+maxZ+']';
+  }
+
+  window.loadMap = async function() {
+    const mid = document.getElementById('missionId').value;
+    const showSolid = document.getElementById('showSolid').checked;
+    loadingEl.style.display = 'block';
+    loadingEl.innerHTML = '<div>Cargando mision '+mid+'...</div>';
+    setLoading('Fetch /missions/'+mid+'/map ...');
+
+    try {
+      const resp = await fetch('/missions/' + mid + '/map');
+      setLoading('HTTP '+resp.status+' - parseando JSON...');
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const data = await resp.json();
+      voxelData = data.voxels || [];
+      setLoading(voxelData.length + ' voxels recibidos, construyendo mesh...', 'ok');
+      buildMesh(showSolid);
+    } catch (e) {
+      showError(e.message);
+    }
+  };
+
+  document.getElementById('showSolid').addEventListener('change', () => {
+    if (voxelData.length) buildMesh(document.getElementById('showSolid').checked);
+  });
+
+  document.getElementById('voxelSize').addEventListener('input', (e) => {
+    const s = parseFloat(e.target.value);
+    voxelGroup.children.forEach(m => m.scale.set(s, s, s));
+  });
+
+  addEventListener('resize', () => {
+    camera.aspect = innerWidth / innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
+  });
+
+  (function animate() {
+    requestAnimationFrame(animate);
+    controls.update();
+    renderer.render(scene, camera);
+  })();
+
+  // Auto-cargar
+  setLoading('Cargando datos de la mision...');
+  await window.loadMap();
+
+} catch(e) {
+  showError(e.message + ' | ' + e.stack);
+}
+</script>
+</body>
+</html>

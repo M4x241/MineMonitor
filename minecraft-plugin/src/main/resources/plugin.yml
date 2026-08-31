@@ -1,0 +1,14 @@
+name: MineExplorer
+version: '${version}'
+main: dev.mineexplorer.MineExplorerPlugin
+api-version: '26.2'
+authors: [Max Jherzon Rodas Palacios]
+description: Simulador de minas subterráneas para exploración autónoma con 3D-CNN y teoría de la información.
+commands:
+  mineexp:
+    description: Comandos del plugin MineExplorer
+    usage: /mineexp <spawn|regen|pos|world>
+    permission: mineexplorer.admin
+permissions:
+  mineexplorer.admin:
+    default: op
