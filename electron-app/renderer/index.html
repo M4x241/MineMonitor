@@ -238,7 +238,6 @@
   <span class="title">MINE EXPLORER</span>
   <span class="subtitle">Exploración Autónoma de Minas Subterráneas</span>
   <div class="tb-right">
-    <span id="backendPill" class="pill offline">Backend: verificando…</span>
     <button id="profileBtn" class="avatar hidden" title="Cuenta"></button>
   </div>
 </div>
@@ -310,10 +309,6 @@
           <div>
             <div class="big" id="statActive">–</div>
             <p>Activas</p>
-          </div>
-          <div>
-            <div class="big" id="statCoverage">–</div>
-            <p>Cobertura</p>
           </div>
         </div>
       </div>
@@ -395,21 +390,6 @@ async function apiFetch(endpoint, options = {}) {
   } catch {
     return { status: 0, data: { detail: 'No se pudo conectar con el backend' } };
   }
-}
-
-async function checkBackend() {
-  const pill = $('backendPill');
-  try {
-    const r = await window.electronAPI.checkBackend();
-    if (r.ok) {
-      pill.textContent = 'Backend: ONLINE';
-      pill.className = 'pill online';
-      return true;
-    }
-  } catch {}
-  pill.textContent = 'Backend: OFFLINE';
-  pill.className = 'pill offline';
-  return false;
 }
 
 // ── Views ────────────────────────────────────────────
@@ -516,6 +496,14 @@ async function loadMissions() {
   renderMissionList();
 }
 
+const STATUS_LABELS = {
+  pending: 'Pendiente',
+  in_progress: 'En progreso',
+  paused: 'En pausa',
+  completed: 'Completada',
+  canceled: 'Cancelada',
+};
+
 function renderMissionList() {
   const list = $('missionList');
   const missions = state.missions;
@@ -524,11 +512,8 @@ function renderMissionList() {
   const total = missions.length;
   const active = missions.filter((m) => m.status === 'in_progress').length;
   const completed = missions.filter((m) => m.status === 'completed').length;
-  const covs = missions.filter((m) => typeof m.coverage_percent === 'number');
-  const avg = covs.length ? Math.round(covs.reduce((s, m) => s + m.coverage_percent, 0) / covs.length * 10) / 10 : 0;
   $('statTotal').textContent = total;
   $('statActive').textContent = active;
-  $('statCoverage').textContent = (covs.length ? avg + '%' : '–');
   $('statCompleted').textContent = completed;
 
   if (!missions.length) {
@@ -549,7 +534,7 @@ function renderMissionList() {
       '<button class="view3d-btn">Ver en 3D</button>';
     card.querySelector('.map-name').textContent = m.name || ('Misión ' + m.id);
     card.querySelector('.map-meta').innerHTML =
-      '<span class="badge ' + m.status + '">' + m.status.replace(/_/g, ' ') + '</span>' +
+      '<span class="badge ' + m.status + '">' + (STATUS_LABELS[m.status] || m.status.replace(/_/g, ' ')) + '</span>' +
       'Cobertura ' + (typeof m.coverage_percent === 'number' ? m.coverage_percent + '%' : '–') +
       ' · Riesgos ' + (m.risk_detections ?? 0);
     card.querySelector('.view3d-btn').addEventListener('click', () => openViewer(m.id, m.name));
@@ -612,7 +597,6 @@ async function createMission() {
 
 // ── Boot ─────────────────────────────────────────────
 async function boot() {
-  await checkBackend();
   if (!state.token) { showAuth(); return; }
   const me = await apiFetch('/auth/me');
   if (me.status === 200) {

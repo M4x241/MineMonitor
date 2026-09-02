@@ -48,11 +48,12 @@ async def _get_mine_or_404(db, mine_id: int) -> dict:
 
 
 @router.get("", response_model=list[MissionOut])
-async def list_missions(status_filter: str | None = None, db=Depends(get_db)):
-    query = "SELECT * FROM missions"
-    params: list = []
+async def list_missions(status_filter: str | None = None, user=Depends(get_current_user),
+                        db=Depends(get_db)):
+    query = "SELECT * FROM missions WHERE user_id = ?"
+    params: list = [user["id"]]
     if status_filter:
-        query += " WHERE status = ?"
+        query += " AND status = ?"
         params.append(status_filter)
     query += " ORDER BY register_date DESC"
     rows = await (await db.execute(query, params)).fetchall()
