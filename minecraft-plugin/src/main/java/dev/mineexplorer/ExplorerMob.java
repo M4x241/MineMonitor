@@ -42,7 +42,8 @@ public class ExplorerMob {
         vex.setSilent(true);
         vex.setPersistent(true);
         vex.setCollidable(false);
-        vex.setInvisible(true);
+        vex.setInvisible(false);
+        vex.setGlowing(true);
         startMover();
         plugin.getLogger().info("Mob explorador desplegado en " + shortLoc(vex.getLocation())
                 + " id=" + vex.getEntityId()
@@ -117,6 +118,14 @@ public class ExplorerMob {
             return vex.getLocation();
         }
         return defaultSpawn.clone();
+    }
+
+    public Location getOrigin() {
+        return defaultSpawn.clone();
+    }
+
+    public org.bukkit.entity.Entity getTargetEntity() {
+        return vex;
     }
 
     public boolean isAtTarget() {

@@ -1,3 +1,5 @@
+import random
+
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from ..db import get_db
@@ -5,6 +7,11 @@ from ..models import MineCreate, MineOut, MinePatch
 from ..security import get_current_user
 
 router = APIRouter(prefix="/mines", tags=["mines"])
+
+
+def _random_seed() -> str:
+    """Genera una semilla numérica aleatoria (máximo 64 caracteres)."""
+    return str(random.randint(0, 2**31 - 1))
 
 
 async def _get_mine_or_404(db, mine_id: int) -> dict:
@@ -23,11 +30,12 @@ async def list_mines(db=Depends(get_db), _=Depends(get_current_user)):
 
 @router.post("", response_model=MineOut, status_code=status.HTTP_201_CREATED)
 async def create_mine(body: MineCreate, user=Depends(get_current_user), db=Depends(get_db)):
+    seed = body.seed if body.seed else _random_seed()
     cur = await db.execute(
         """INSERT INTO mines (name, seed, world_name, spawn_x, spawn_y, spawn_z,
            difficulty, description, created_by)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (body.name, body.seed, body.world_name, body.spawn_x, body.spawn_y,
+        (body.name, seed, body.world_name, body.spawn_x, body.spawn_y,
          body.spawn_z, body.difficulty, body.description, user["id"]),
     )
     await db.commit()

@@ -165,6 +165,34 @@
     border-radius: 6px; font-size: 12px; white-space: nowrap;
   }
   .view3d-btn:hover { background: #22507a; }
+  .start-btn {
+    background: #1a5c2a; border: 1px solid #4f4; color: #fff; padding: 8px 14px;
+    border-radius: 6px; font-size: 12px; white-space: nowrap; margin-right: 4px;
+  }
+  .start-btn:hover { background: #227a32; }
+  .pause-btn {
+    background: #5a5c1a; border: 1px solid #ff4; color: #fff; padding: 8px 14px;
+    border-radius: 6px; font-size: 12px; white-space: nowrap; margin-right: 4px;
+  }
+  .pause-btn:hover { background: #7a7a22; }
+  .resume-btn {
+    background: #1a5c2a; border: 1px solid #4f4; color: #fff; padding: 8px 14px;
+    border-radius: 6px; font-size: 12px; white-space: nowrap; margin-right: 4px;
+  }
+  .resume-btn:hover { background: #227a32; }
+  .stop-btn {
+    background: #5c1a1a; border: 1px solid #f66; color: #fff; padding: 8px 14px;
+    border-radius: 6px; font-size: 12px; white-space: nowrap; margin-right: 4px;
+  }
+  .stop-btn:hover { background: #7a2222; }
+  .drone-pill {
+    display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: #888;
+    border: 1px solid #333; border-radius: 12px; padding: 3px 10px; background: #15151d;
+  }
+  .drone-pill .dot { width: 8px; height: 8px; border-radius: 50%; background: #888; }
+  .drone-pill.online .dot { background: #4f4; box-shadow: 0 0 6px #4f4; }
+  .drone-pill.offline .dot { background: #f66; box-shadow: 0 0 6px #f66; }
+  .drone-pill.moving .dot { background: #4af; box-shadow: 0 0 8px #4af; }
 
   .empty-state {
     color: #666; text-align: center; padding: 40px 20px; font-size: 12px; line-height: 1.8;
@@ -324,6 +352,9 @@
       <div class="rp-header">
         <h2>MAPAS / MISIONES</h2>
         <span class="count" id="missionCount"></span>
+        <span class="drone-pill offline" id="dronePill" title="Estado del dron en el servidor de Minecraft">
+          <span class="dot"></span><span id="dronePillText">Dron: sin conexión</span>
+        </span>
         <button id="relistBtn" class="ghost-btn">↻ Listar mapas</button>
       </div>
       <div id="missionList" class="map-list">
@@ -343,8 +374,8 @@
       <input id="newMissionName" placeholder="Ej: Mina principal - sector 3">
     </div>
     <div class="field">
-      <label>Mina</label>
-      <select id="newMissionMine"></select>
+      <label>Nombre de la mina</label>
+      <input id="newMineName" placeholder="Ej: Mina de cobre">
     </div>
     <p id="modalMsg" class="msg"></p>
     <div class="modal-actions">
@@ -476,6 +507,7 @@ async function onRegister(e) {
 }
 
 function logout() {
+  if (dronePillTimer) { clearInterval(dronePillTimer); dronePillTimer = null; }
   state.token = '';
   state.user = null;
   localStorage.removeItem(TOKEN_KEY);
@@ -531,14 +563,90 @@ function renderMissionList() {
         '<div class="map-name"></div>' +
         '<div class="map-meta"></div>' +
       '</div>' +
+      (m.status === 'pending' ? '<button class="start-btn">Iniciar</button>' : '') +
+      (m.status === 'in_progress' ? '<button class="pause-btn">Pausar</button>' : '') +
+      (m.status === 'paused' ? '<button class="resume-btn">Reanudar</button>' : '') +
+      ((m.status === 'in_progress' || m.status === 'paused') ? '<button class="stop-btn">Finalizar</button>' : '') +
       '<button class="view3d-btn">Ver en 3D</button>';
     card.querySelector('.map-name').textContent = m.name || ('Misión ' + m.id);
     card.querySelector('.map-meta').innerHTML =
       '<span class="badge ' + m.status + '">' + (STATUS_LABELS[m.status] || m.status.replace(/_/g, ' ')) + '</span>' +
-      'Cobertura ' + (typeof m.coverage_percent === 'number' ? m.coverage_percent + '%' : '–') +
-      ' · Riesgos ' + (m.risk_detections ?? 0);
+      'Mina: ' + (m.mine_name || 'Mina ' + m.mine_id);
+    if (m.status === 'pending') {
+      card.querySelector('.start-btn').addEventListener('click', () => startMissionFromCard(m.id));
+    }
+    if (m.status === 'in_progress') {
+      card.querySelector('.pause-btn').addEventListener('click', () => pauseMissionFromCard(m.id));
+    }
+    if (m.status === 'paused') {
+      card.querySelector('.resume-btn').addEventListener('click', () => resumeMissionFromCard(m.id));
+    }
+    if (m.status === 'in_progress' || m.status === 'paused') {
+      card.querySelector('.stop-btn').addEventListener('click', () => stopMissionFromCard(m.id));
+    }
     card.querySelector('.view3d-btn').addEventListener('click', () => openViewer(m.id, m.name));
     list.appendChild(card);
+  }
+}
+
+async function startMissionFromCard(missionId) {
+  const r = await apiFetch('/missions/' + missionId + '/start', { method: 'POST' });
+  if (r.status === 200) {
+    await loadMissions();
+  } else {
+    alert(r.data?.detail || 'No se pudo iniciar la misión');
+  }
+}
+
+async function pauseMissionFromCard(missionId) {
+  const r = await apiFetch('/missions/' + missionId + '/pause', { method: 'POST' });
+  if (r.status === 200) {
+    await loadMissions();
+  } else {
+    alert(r.data?.detail || 'No se pudo pausar la misión');
+  }
+}
+
+async function resumeMissionFromCard(missionId) {
+  const r = await apiFetch('/missions/' + missionId + '/resume', { method: 'POST' });
+  if (r.status === 200) {
+    await loadMissions();
+  } else {
+    alert(r.data?.detail || 'No se pudo reanudar la misión');
+  }
+}
+
+async function stopMissionFromCard(missionId) {
+  if (!confirm('¿Finalizar definitivamente la exploración de la misión ' + missionId + '?')) return;
+  const r = await apiFetch('/missions/' + missionId + '/stop', { method: 'POST' });
+  if (r.status === 200) {
+    await loadMissions();
+  } else {
+    alert(r.data?.detail || 'No se pudo finalizar la misión');
+  }
+}
+
+let dronePillTimer = null;
+
+async function updateDroneStatus() {
+  const pill = $('dronePill');
+  if (!pill) return;
+  const text = $('dronePillText');
+  const r = await apiFetch('/mc/status');
+  if (r.status !== 200 || !r.data || !r.data.mob) {
+    pill.className = 'drone-pill offline';
+    text.textContent = 'Dron: sin conexión';
+    return;
+  }
+  const mob = r.data.mob;
+  const moving = r.data.moving;
+  const pos = '(' + Math.round(mob.x) + ', ' + Math.round(mob.y) + ', ' + Math.round(mob.z) + ')';
+  if (moving) {
+    pill.className = 'drone-pill moving';
+    text.textContent = 'Dron: navegando ' + pos;
+  } else {
+    pill.className = 'drone-pill online';
+    text.textContent = 'Dron: en ' + pos;
   }
 }
 
@@ -562,29 +670,35 @@ function closeViewer() {
 async function openNewExploration() {
   $('modalMsg').textContent = '';
   $('modalMsg').className = 'msg';
-  const sel = $('newMissionMine');
-  sel.innerHTML = '<option value="1">Mina 1 (predeterminada)</option>';
-  const r = await apiFetch('/mines');
-  if (r.status === 200 && Array.isArray(r.data) && r.data.length) {
-    sel.innerHTML = '';
-    for (const mine of r.data) {
-      const opt = document.createElement('option');
-      opt.value = mine.id;
-      opt.textContent = mine.name + ' (#' + mine.id + ')';
-      sel.appendChild(opt);
-    }
-  }
   $('modalOverlay').classList.remove('hidden');
   $('newMissionName').value = '';
+  $('newMineName').value = '';
   $('newMissionName').focus();
 }
 
 async function createMission() {
   const name = $('newMissionName').value.trim();
+  const mineName = $('newMineName').value.trim();
   const msg = $('modalMsg');
   if (!name) { msg.textContent = 'Escribe un nombre para la misión'; msg.className = 'msg error'; return; }
-  const mineId = parseInt($('newMissionMine').value || '1', 10);
-  msg.textContent = 'Creando…'; msg.className = 'msg info';
+  if (!mineName) { msg.textContent = 'Escribe un nombre para la mina'; msg.className = 'msg error'; return; }
+  msg.textContent = 'Creando mina…'; msg.className = 'msg info';
+
+  const mine = await apiFetch('/mines', {
+    method: 'POST',
+    body: { name: mineName },
+  });
+
+  let mineId;
+  if (mine.status === 201 && mine.data && mine.data.id) {
+    mineId = mine.data.id;
+  } else {
+    msg.textContent = mine.data?.detail || 'No se pudo crear la mina';
+    msg.className = 'msg error';
+    return;
+  }
+
+  msg.textContent = 'Creando misión y arrancando exploración…'; msg.className = 'msg info';
   const r = await apiFetch('/missions', { method: 'POST', body: { name, mine_id: mineId, config_json: {} } });
   if (r.status === 201) {
     $('modalOverlay').classList.add('hidden');
@@ -609,6 +723,13 @@ async function boot() {
     // Backend offline: no pedir login de nuevo
     goApp({ username: 'usuario', email: '' });
   }
+  startDronePolling();
+}
+
+function startDronePolling() {
+  if (dronePillTimer) clearInterval(dronePillTimer);
+  updateDroneStatus();
+  dronePillTimer = setInterval(updateDroneStatus, 3000);
 }
 
 // ── Events ───────────────────────────────────────────

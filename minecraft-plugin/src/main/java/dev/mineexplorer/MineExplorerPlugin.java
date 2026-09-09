@@ -1,6 +1,7 @@
 package dev.mineexplorer;
 
 import org.bukkit.Bukkit;
+import org.bukkit.GameMode;
 import org.bukkit.GameRule;
 import org.bukkit.Location;
 import org.bukkit.Material;
@@ -14,6 +15,7 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.entity.EntityDeathEvent;
+import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.jetbrains.annotations.NotNull;
 
@@ -53,6 +55,7 @@ public final class MineExplorerPlugin extends JavaPlugin {
         wsServer.start();
 
         getServer().getPluginManager().registerEvents(new EntityWatchdog(explorer), this);
+        getServer().getPluginManager().registerEvents(new SpectatorFollow(explorer), this);
 
         getLogger().info("MineExplorer activo. Mina seed=" + seed
                 + " región=" + regionHalf + " WS en puerto " + wsPort);
@@ -177,6 +180,24 @@ public final class MineExplorerPlugin extends JavaPlugin {
             return List.of("spawn", "pos", "regen", "world");
         }
         return List.of();
+    }
+
+    /** Al entrar un jugador, lo pasa a spectator con visión nocturna (cámara libre). */
+    static final class SpectatorFollow implements Listener {
+        private final ExplorerMob explorer;
+
+        SpectatorFollow(ExplorerMob explorer) {
+            this.explorer = explorer;
+        }
+
+        @EventHandler
+        public void onJoin(PlayerJoinEvent e) {
+            Player p = e.getPlayer();
+            p.setGameMode(GameMode.SPECTATOR);
+            p.addPotionEffect(new org.bukkit.potion.PotionEffect(
+                    org.bukkit.potion.PotionEffectType.NIGHT_VISION,
+                    Integer.MAX_VALUE, 1, false, false, false));
+        }
     }
 
     /** Vigila la entidad exploradora para registrar la causa de su desaparición. */

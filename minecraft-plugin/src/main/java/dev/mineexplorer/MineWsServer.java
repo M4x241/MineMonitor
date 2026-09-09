@@ -103,6 +103,7 @@ public class MineWsServer extends WebSocketServer {
     private JsonObject buildStatus() {
         Location mob = explorer.getLocation();
         Location spawn = world.getSpawnLocation();
+        Location mineSpawn = explorer.getOrigin();
         JsonObject s = new JsonObject();
         s.addProperty("world", world.getName());
         s.addProperty("seed", plugin.seed());
@@ -111,9 +112,11 @@ public class MineWsServer extends WebSocketServer {
         s.addProperty("obstructionBlocks", generator.getObstructionBlocks());
         s.addProperty("uptimeSec", (System.currentTimeMillis() - startMillis) / 1000L);
         s.add("worldSpawn", pos(spawn));
+        s.add("mineSpawn", pos(mineSpawn));
         s.add("mob", pos(mob));
         s.addProperty("mobValid", explorer.isValid());
         s.addProperty("mobType", explorer.getTypeName());
+        s.addProperty("moving", !explorer.isAtTarget());
         return s;
     }
 

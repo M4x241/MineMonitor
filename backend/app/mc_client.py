@@ -68,6 +68,15 @@ class MCBridgeClient:
             raise RuntimeError(resp.get("error", "error desconocido del plugin"))
         return resp.get("result", {})
 
+    async def is_ready(self) -> bool:
+        if self.connected:
+            return True
+        try:
+            await self.connect()
+            return self.connected
+        except Exception:  # noqa: BLE001
+            return False
+
     async def status(self) -> dict:
         return await self.request({"type": "status"})
 

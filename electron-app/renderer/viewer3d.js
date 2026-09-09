@@ -14,6 +14,10 @@ export class Viewer3D {
     this.voxelGroup = new THREE.Group();
     this.voxelSize = 1.0;
     this._raf = 0;
+    this._refreshTimer = null;
+    this._highlightTimer = null;
+    this._missionId = null;
+    this._highlightGroup = new THREE.Group();
 
     this._buildScene();
     this._buildOverlay();
@@ -55,6 +59,7 @@ export class Viewer3D {
     this.scene.add(this.grid);
 
     this.scene.add(this.voxelGroup);
+    this.scene.add(this._highlightGroup);
     this.boxGeo = new THREE.BoxGeometry(1, 1, 1);
     this.dummy = new THREE.Object3D();
   }
@@ -116,6 +121,7 @@ export class Viewer3D {
 
   async loadMap(missionId, missionName) {
     this.doc$('v3dTitle').textContent = 'Misión ' + missionId + (missionName ? ' - ' + missionName : '');
+    this._missionId = missionId;
     const loading = this.doc$('v3dLoading');
     const title = this.doc$('v3dLoadTitle');
     const detail = this.doc$('v3dLoadDetail');
@@ -135,6 +141,49 @@ export class Viewer3D {
       detail.textContent = e.message || String(e);
       return;
     }
+
+    if (this._refreshTimer) clearInterval(this._refreshTimer);
+    this._refreshTimer = setInterval(() => this._refreshMap(), 3000);
+  }
+
+  async _refreshMap() {
+    if (!this._missionId) return;
+    try {
+      const r = await this.fetch('/missions/' + this._missionId + '/map');
+      if (r.status !== 200) return;
+      const data = r.data || {};
+      const fresh = data.voxels || [];
+      if (fresh.length === this.voxelData.length) return;
+      const prev = new Set(this.voxelData.map((v) => v.pos.x + ',' + v.pos.y + ',' + v.pos.z));
+      const added = fresh.filter((v) => !prev.has(v.pos.x + ',' + v.pos.y + ',' + v.pos.z));
+      this.voxelData = fresh;
+      this.buildMesh();
+      if (added.length) {
+        this._flashAdded(added);
+        const detail = this.doc$('v3dLoadDetail');
+        detail.textContent = this.voxelData.length + ' voxels (nuevos: ' + added.length + ')';
+      }
+    } catch (_e) {
+      /* el siguiente ciclo reintentará */
+    }
+  }
+
+  _flashAdded(added) {
+    if (this._highlightGroup.parent !== this.scene) this.scene.add(this._highlightGroup);
+    const mat = new THREE.MeshBasicMaterial({ color: 0xff8844, transparent: true, opacity: 0.9 });
+    const im = new THREE.InstancedMesh(this.boxGeo, mat, added.length);
+    for (let i = 0; i < added.length; i++) {
+      this.dummy.position.set(added[i].pos.x, added[i].pos.y, added[i].pos.z);
+      this.dummy.updateMatrix();
+      im.setMatrixAt(i, this.dummy.matrix);
+    }
+    im.instanceMatrix.needsUpdate = true;
+    im.scale.set(1.05, 1.05, 1.05);
+    this._highlightGroup.clear();
+    this._highlightGroup.add(im);
+    const prev = this._highlightTimer;
+    if (prev) clearTimeout(prev);
+    this._highlightTimer = setTimeout(() => this._highlightGroup.clear(), 1200);
   }
 
   buildMesh() {
@@ -179,6 +228,8 @@ export class Viewer3D {
 
   dispose() {
     cancelAnimationFrame(this._raf);
+    if (this._refreshTimer) clearInterval(this._refreshTimer);
+    if (this._highlightTimer) clearTimeout(this._highlightTimer);
     if (this._ro) this._ro.disconnect();
     if (this.renderer) {
       this.renderer.dispose();

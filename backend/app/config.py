@@ -14,6 +14,7 @@ class Settings:
     jwt_expire_minutes: int = int(os.getenv("JWT_EXPIRE_MINUTES", "525600"))
     mc_ws_url: str = os.getenv("MC_WS_URL", "ws://127.0.0.1:8765")
     maps_dir: Path = field(default_factory=lambda: Path(os.getenv("MAPS_DIR", BASE_DIR / "data" / "maps")))
+    server_dir: Path = Path(os.getenv("SERVER_DIR", BASE_DIR.parent / "server"))
 
 
 settings = Settings()

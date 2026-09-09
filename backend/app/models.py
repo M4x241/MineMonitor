@@ -34,7 +34,7 @@ class UserOut(BaseModel):
 # --- Mines ---------------------------------------------------------------
 class MineCreate(BaseModel):
     name: str = Field(min_length=1, max_length=64)
-    seed: str = Field(default="0", max_length=64)
+    seed: str | None = None
     world_name: str = "mine"
     spawn_x: int = 0
     spawn_y: int = 64
@@ -91,6 +91,7 @@ class MissionOut(BaseModel):
     name: str
     user_id: int
     mine_id: int
+    mine_name: str | None = None
     map_path: str | None = None
     config_json: dict[str, Any] | None = None
     status: str
