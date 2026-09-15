@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import math
 from pathlib import Path
 
 import aiosqlite
@@ -23,11 +24,16 @@ _RISK_MAP = {
 
 _AIR_MATERIALS = {"AIR", "CAVE_AIR", "VOID_AIR", "WATER", "LAVA"}
 
-_NEIGHBOR_OFFSETS = [
-    (1, 0, 0), (-1, 0, 0),
-    (0, 0, 1), (0, 0, -1),
-    (0, 1, 0), (0, -1, 0),
-]
+# Alfabeto de materiales observables en la mina (generador + zonas de riesgo).
+# Cada bloque desconocido es una variable aleatoria X_u sobre este alfabeto;
+# con prior uniforme, su entropía es H = log2(K) bits.
+_MATERIAL_ALPHABET = frozenset({
+    "STONE", "COBBLESTONE", "DEEPSLATE",
+    "ANDESITE", "DIORITE", "GRANITE", "COBBLED_DEEPSLATE",
+    "CRACKED_STONE_BRICKS", "GRAVEL", "SAND", "DIRT", "TUFF",
+    "MAGMA_BLOCK", "CAVE_AIR", "AIR", "VOID_AIR", "WATER", "LAVA",
+})
+_CELL_ENTROPY_BITS = math.log2(len(_MATERIAL_ALPHABET))
 
 
 class ExplorationStopped(Exception):
@@ -236,100 +242,180 @@ async def _update_progress(mission_id: int, coverage: float) -> None:
         await conn.close()
 
 
+def _cell_center(cell):
+    return {"x": cell[0] + 0.5, "y": cell[1] + 0.5, "z": cell[2] + 0.5}
+
+
+def _neighbors(cell):
+    x, y, z = cell
+    return (
+        (x + 1, y, z), (x - 1, y, z),
+        (x, y + 1, z), (x, y - 1, z),
+        (x, y, z + 1), (x, y, z - 1),
+    )
+
+
+async def _scan_memory(center, known: dict, radius: int) -> None:
+    """Vuelca los bloques vistos por el WebSocket en el mapa interno known."""
+    try:
+        resp = await bridge.blocks(center, radius)
+    except Exception as exc:  # noqa: BLE001
+        log.debug("scan falló en %s: %s", center, exc)
+        return
+    for blk in resp.get("blocks", []):
+        known[(blk["x"], blk["y"], blk["z"])] = blk.get("material", "STONE")
+
+
+def _known_air(known: dict) -> set:
+    return {cell for cell, mat in known.items() if mat in _AIR_MATERIALS}
+
+
+async def _wait_arrival(timeout: float = 8.0) -> None:
+    """Espera a que el dron termine su interpolación (moving == False)."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while loop.time() < deadline:
+        try:
+            st = await bridge.status()
+            if st and not st.get("moving"):
+                return
+        except Exception:  # noqa: BLE001
+            pass
+        await asyncio.sleep(0.1)
+
+
+async def _move_and_wait(cell, speed: float = 15.0) -> None:
+    await bridge.move(_cell_center(cell), speed=max(1.0, min(speed, 20.0)))
+    await _wait_arrival(timeout=8.0)
+
+
+def _info_gain(cell, known: dict, radius: int = 3, half: int | None = None) -> float:
+    """Ganancia de información (bits) de observar 'cell' con el sensor real.
+
+    G(c) = Σ_{u ∈ footprint(c)} H(X_u), H(X_u) = _CELL_ENTROPY_BITS para todo
+    bloque u aún desconocido dentro del cubo de radio 'radius' (el mismo sensor
+    que usa _scan_memory). Solo cuenta la caja de la mina (x/z ±half, y 10-52)
+    para no atraer al dron hacia el exterior. Devuelve 0 si no aporta nada."""
+    x, y, z = cell
+    bits = 0.0
+    for dx in range(-radius, radius + 1):
+        ux = x + dx
+        if half is not None and abs(ux) > half:
+            continue
+        for dy in range(-radius, radius + 1):
+            uy = y + dy
+            if uy < 10 or uy > 52:
+                continue
+            for dz in range(-radius, radius + 1):
+                uz = z + dz
+                if half is not None and abs(uz) > half:
+                    continue
+                u = (ux, uy, uz)
+                if u not in known:
+                    bits += _CELL_ENTROPY_BITS
+    return bits
+
+
 async def start_exploration(mission_id: int) -> dict:
-    """Despliega/posiciona el dron al inicio de la cueva y recorre la red de
-    túneles de la mina (solo por celdas de aire) recogiendo voxeles en la BD.
-    Es un autómata celda a celda: consulta los bloques locales, elige el
-    siguiente paso entre las celdas libres con mayor información (ramas sin
-    explorar, preferencia a seguir recto) y retrocede en callejones sin salida."""
+    """Autómata de exploración por teoría de la información (sin BFS/DFS).
+
+    En cada paso decide moverse a la celda de aire adyacente sin visitar que
+    maximiza la ganancia de información ahora mismo: G(c) = Σ H(X_u) sobre el
+    footprint del sensor (cubo de radio 3, el mismo que usa _scan_memory),
+    evaluado contra el mapa conocido. Sin memoria suficiente (celda sin opciones
+    con información pendiente) retrocede rápido por el trail hasta la bifurcación
+    más cercana (Trémaux). Cuando el trail se agota sin opciones, la exploración
+    terminó sola."""
     status = await bridge.status()
     mine = status.get("mineSpawn", status.get("worldSpawn"))
     half = int(status.get("regionHalf", 48) or 48)
+    ctrl = _controller(mission_id)
 
-    # Arrancar SIEMPRE en el interior de la mina (mineSpawn, nivel de la galería:
-    # startY-3). worldSpawn es la superficie del mundo; el mob puede estar perdido
-    # en un terreno abierto o dentro de un bloque por misiones previas.
     start = {"x": mine.get("x", 0.5), "y": mine.get("y", 51.0), "z": mine.get("z", 0.5)}
     await bridge.teleport(start)
     await _record_blocks(mission_id, start, radius=8, step=0)
 
-    max_steps = max(40, half * half // 3)
-    visited = set()
-    stack = []
-    heading = (1, 0, 0)
-    cur = (int(round(start["x"])), int(round(start["y"])), int(round(start["z"])))
-    visited.add(cur)
-    stack.append(cur)
+    known: dict = {}
+    await _scan_memory(start, known, radius=3)
 
-    ctrl = _controller(mission_id)
-    for step in range(1, max_steps + 1):
+    cur = (int(round(start["x"])), int(round(start["y"])), int(round(start["z"])))
+    walked = {cur}
+    path = [cur]
+    forks = set()
+    heading = (1, 0, 0)
+    max_steps = max(120, half * half)
+
+    def options_at(cell):
+        opts = []
+        for n in _neighbors(cell):
+            if n in walked or n not in known or known[n] not in _AIR_MATERIALS:
+                continue
+            gain = _info_gain(n, known, half=half)
+            if gain > 0:
+                opts.append((gain, n))
+        return opts
+
+    def pick(opts):
+        def key(pair):
+            gain, n = pair
+            d = (n[0] - cur[0], n[1] - cur[1], n[2] - cur[2])
+            align = int(d == heading)
+            back = int(d == (-heading[0], -heading[1], -heading[2]))
+            return (gain, align, -back)
+        return max(opts, key=key)[1]
+
+    step = 0
+    complete = False
+    while step < max_steps:
         await ctrl.wait_if_paused()
         if ctrl.stopped():
             log.info("[misión %s] detenida por el usuario", mission_id)
             break
-        ahead = (cur[0] + heading[0], cur[1] + heading[1], cur[2] + heading[2])
-        next_cell = await _choose_next_cell(cur, visited, heading)
-        if next_cell is None:
-            if len(stack) <= 1:
-                log.info("[misión %s] sin celdas libres nuevas; terminando", mission_id)
+
+        opts = options_at(cur)
+        if len(opts) >= 2:
+            forks.add(cur)
+
+        if not opts:
+            # Callejón sin salida: retrocede rápido por el trail hasta la
+            # bifurcación más cercana que aún tenga opciones con información.
+            while len(path) > 1:
+                await ctrl.wait_if_paused()
+                if ctrl.stopped():
+                    break
+                path.pop()
+                prev = path[-1]
+                cur = prev
+                walked.add(cur)
+                await _move_and_wait(prev, speed=20.0)
+                if options_at(cur):
+                    break
+            if len(path) <= 1 and not options_at(cur):
+                complete = True
+                log.info("[misión %s] exploración completa: sin celdas con información pendiente",
+                         mission_id)
                 break
-            stack.pop()
-            back = stack[-1]
-            await bridge.move({"x": back[0] + 0.5, "y": back[1] + 0.5, "z": back[2] + 0.5},
-                              speed=6.0)
-            await asyncio.sleep(2.0)
             continue
 
-        await bridge.move({"x": next_cell[0] + 0.5, "y": next_cell[1] + 0.5,
-                           "z": next_cell[2] + 0.5}, speed=6.0)
-        await asyncio.sleep(2.0)
-        cur = next_cell
-        visited.add(cur)
-        stack.append(cur)
-        if ahead == next_cell:
-            heading = tuple(heading)
+        nxt = pick(opts)
+        d = (nxt[0] - cur[0], nxt[1] - cur[1], nxt[2] - cur[2])
+        await ctrl.wait_if_paused()
+        if ctrl.stopped():
+            log.info("[misión %s] detenida por el usuario", mission_id)
+            break
+        await _move_and_wait(nxt, speed=15.0)
+        cur = nxt
+        walked.add(cur)
+        path.append(cur)
+        heading = d
+        step += 1
 
-        center = {"x": cur[0] + 0.5, "y": cur[1] + 0.5, "z": cur[2] + 0.5}
-        recorded = await _record_blocks(mission_id, center, radius=8, step=step)
-        coverage = (len(visited) / max_steps) * 100.0
+        await _scan_memory(_cell_center(cur), known, radius=3)
+        await _record_blocks(mission_id, _cell_center(cur), radius=6, step=step)
+        coverage = (len(walked) / max(len(_known_air(known)), 1)) * 100.0
         await _update_progress(mission_id, coverage)
-        log.info("[misión %s] paso %d/%d @ %s (%d bloques) -> cobertura %.1f%%",
-                 mission_id, step, max_steps, (cur[0], cur[1], cur[2]), recorded, coverage)
+        log.info("[misión %s] paso %d @ %s (mapa %d, forks %d) -> cobertura %.1f%%",
+                 mission_id, step, cur, len(known), len(forks), coverage)
 
-    return {"spawn": start, "status": status, "path_len": len(visited)}
-
-
-async def _choose_next_cell(cell, visited, heading):
-    """Consulta los bloques alrededor y elige la siguiente celda libre con más
-    información: prioriza ramas no visitadas y seguir recto, evita girar y
-    volver sobre sí mismo. Devuelve (x,y,z) o None si no hay paso libre."""
-    center = {"x": cell[0] + 0.5, "y": cell[1] + 0.5, "z": cell[2] + 0.5}
-    try:
-        resp = await bridge.blocks(center, radius=1)
-    except Exception as exc:  # noqa: BLE001
-        log.debug("blocks() falló en %s: %s", center, exc)
-        return None
-
-    free = set()
-    for blk in resp.get("blocks", []):
-        k = (blk["x"], blk["y"], blk["z"])
-        if k == cell or blk.get("material", "STONE") in _AIR_MATERIALS:
-            free.add(k)
-
-    candidates = []
-    for ox, oy, oz in _NEIGHBOR_OFFSETS:
-        n = (cell[0] + ox, cell[1] + oy, cell[2] + oz)
-        if n in free:
-            candidates.append(n)
-
-    # Ordena: ramas nunca visitadas primero; dentro de un grupo, dar preferencia
-    # a seguir en la misma dirección del heading (menos giro).
-    def score(n):
-        dx, dy, dz = n[0] - cell[0], n[1] - cell[1], n[2] - cell[2]
-        straight = (dx, dy, dz) == tuple(heading)
-        unvisited = n not in visited
-        back = (dx, dy, dz) == (-heading[0], -heading[1], -heading[2])
-        return (int(unvisited), int(straight), int(not back))
-
-    best = max(candidates, key=score, default=None)
-    return best
+    return {"spawn": start, "status": status, "path_len": len(walked), "forks": len(forks),
+            "complete": complete}

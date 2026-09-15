@@ -3,7 +3,11 @@ console.log('[viewer3d] module loaded');
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
-const VOXEL_COLOR = 0x44aaff;
+const _NEIGHBORS = [
+  [1, 0, 0], [-1, 0, 0],
+  [0, 1, 0], [0, -1, 0],
+  [0, 0, 1], [0, 0, -1],
+];
 
 export class Viewer3D {
   constructor(container, fetch) {
@@ -200,14 +204,29 @@ export class Viewer3D {
       return;
     }
 
-    const mat = new THREE.MeshLambertMaterial({ color: VOXEL_COLOR });
-    const im = new THREE.InstancedMesh(this.boxGeo, mat, all.length);
-    for (let i = 0; i < all.length; i++) {
-      this.dummy.position.set(all[i].pos.x, all[i].pos.y, all[i].pos.z);
+    // Solo se dibujan las PAREDES (sólidos con al menos un vecino de aire),
+    // así los pasillos quedan huecos y el mapa se ve como Minecraft.
+    const key = (p) => p.x + ',' + p.y + ',' + p.z;
+    const air = new Map();
+    for (const v of all) if (v.state === 1 && !air.has(key(v.pos))) air.set(key(v.pos), true);
+    const walls = [];
+    for (const v of all) {
+      if (v.state !== 2) continue;
+      if (this._hasAirNeighbor(v.pos, air)) walls.push(v);
+    }
+
+    const boxGeo = this.boxGeo;
+    const wallMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
+    const im = new THREE.InstancedMesh(boxGeo, wallMat, walls.length);
+
+    for (let i = 0; i < walls.length; i++) {
+      this.dummy.position.set(walls[i].pos.x, walls[i].pos.y, walls[i].pos.z);
       this.dummy.updateMatrix();
       im.setMatrixAt(i, this.dummy.matrix);
+      im.setColorAt(i, this._wallColor(walls[i]));
     }
     im.instanceMatrix.needsUpdate = true;
+    if (im.instanceColor) im.instanceColor.needsUpdate = true;
     im.scale.set(this.voxelSize, this.voxelSize, this.voxelSize);
     this.voxelGroup.add(im);
 
@@ -222,8 +241,25 @@ export class Viewer3D {
     this.camera.position.set((minX + maxX) / 2 + 32, (minY + maxY) / 2 + 28, (minZ + maxZ) / 2 + 32);
 
     loading.style.display = 'none';
-    this.doc$('v3dStats').innerHTML = '<span>' + total + '</span> voxels cargados &middot; ' +
+    this.doc$('v3dStats').innerHTML =
+      '<span>' + walls.length + '</span> de pared &middot; <span>' + total + '</span> voxels totales &middot; ' +
       'X[' + minX + '..' + maxX + '] Y[' + minY + '..' + maxY + '] Z[' + minZ + '..' + maxZ + ']';
+  }
+
+  _hasAirNeighbor(pos, air) {
+    for (const d of _NEIGHBORS) {
+      if (air.has((pos.x + d[0]) + ',' + (pos.y + d[1]) + ',' + (pos.z + d[2]))) return true;
+    }
+    return false;
+  }
+
+  _wallColor(v) {
+    const r = v.risk | 0;
+    if (r >= 4) return new THREE.Color(0xff6a3d);      // lava / magma
+    if (r === 3) return new THREE.Color(0x7a7a94);     // escombros / andesita
+    if (r === 2) return new THREE.Color(0xa08a5e);     // grava / tierra
+    if (r === 1) return new THREE.Color(0x9c4f3d);     // grietas
+    return new THREE.Color(0x8e8e96);                   // piedra
   }
 
   dispose() {
