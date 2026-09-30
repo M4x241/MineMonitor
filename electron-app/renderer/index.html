@@ -185,6 +185,11 @@
     border-radius: 6px; font-size: 12px; white-space: nowrap; margin-right: 4px;
   }
   .stop-btn:hover { background: #7a2222; }
+  .switch-btn {
+    background: #15151d; border: 1px solid #4af; color: #7cf; padding: 8px 14px;
+    border-radius: 6px; font-size: 12px; white-space: nowrap; margin-right: 4px;
+  }
+  .switch-btn:hover { background: #1a3a5c; color: #fff; }
   .drone-pill {
     display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: #888;
     border: 1px solid #333; border-radius: 12px; padding: 3px 10px; background: #15151d;
@@ -567,6 +572,8 @@ function renderMissionList() {
       (m.status === 'in_progress' ? '<button class="pause-btn">Pausar</button>' : '') +
       (m.status === 'paused' ? '<button class="resume-btn">Reanudar</button>' : '') +
       ((m.status === 'in_progress' || m.status === 'paused') ? '<button class="stop-btn">Finalizar</button>' : '') +
+      ((m.status === 'paused' || m.status === 'completed')
+          ? '<button class="switch-btn" title="Cargar esa mina en Minecraft (sin explorar)">Ver en Minecraft</button>' : '') +
       '<button class="view3d-btn">Ver en 3D</button>';
     card.querySelector('.map-name').textContent = m.name || ('Misión ' + m.id);
     card.querySelector('.map-meta').innerHTML =
@@ -583,6 +590,9 @@ function renderMissionList() {
     }
     if (m.status === 'in_progress' || m.status === 'paused') {
       card.querySelector('.stop-btn').addEventListener('click', () => stopMissionFromCard(m.id));
+    }
+    if (m.status === 'paused' || m.status === 'completed') {
+      card.querySelector('.switch-btn').addEventListener('click', () => switchMissionFromCard(m.id));
     }
     card.querySelector('.view3d-btn').addEventListener('click', () => openViewer(m.id, m.name));
     list.appendChild(card);
@@ -626,6 +636,15 @@ async function stopMissionFromCard(missionId) {
   }
 }
 
+async function switchMissionFromCard(missionId) {
+  const r = await apiFetch('/missions/' + missionId + '/switch', { method: 'POST' });
+  if (r.status === 200) {
+    await updateDroneStatus();
+  } else {
+    alert(r.data?.detail || 'No se pudo cargar el mapa en Minecraft');
+  }
+}
+
 let dronePillTimer = null;
 
 async function updateDroneStatus() {
@@ -641,12 +660,13 @@ async function updateDroneStatus() {
   const mob = r.data.mob;
   const moving = r.data.moving;
   const pos = '(' + Math.round(mob.x) + ', ' + Math.round(mob.y) + ', ' + Math.round(mob.z) + ')';
+  const seed = r.data.seed ? ' · seed:' + r.data.seed : '';
   if (moving) {
     pill.className = 'drone-pill moving';
-    text.textContent = 'Dron: navegando ' + pos;
+    text.textContent = 'Dron: navegando ' + pos + seed;
   } else {
     pill.className = 'drone-pill online';
-    text.textContent = 'Dron: en ' + pos;
+    text.textContent = 'Dron: en ' + pos + seed;
   }
 }
 
