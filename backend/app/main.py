@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from .db import init_db_sync
+from .db import init_db_sync, reconcile_on_startup
 from .routers import auth, mc, mines, missions
 
 STATIC_DIR = Path(__file__).parent.parent / "static"
@@ -14,6 +14,7 @@ STATIC_DIR = Path(__file__).parent.parent / "static"
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db_sync()
+    reconcile_on_startup()
     yield
 
 
@@ -27,8 +28,8 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=["http://127.0.0.1:8000", "http://localhost:8000"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )

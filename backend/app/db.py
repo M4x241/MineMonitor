@@ -24,6 +24,20 @@ def init_db_sync() -> None:
     conn.close()
 
 
+def reconcile_on_startup() -> None:
+    """Tras un reinicio de la máquina/backend no quedan tareas en memoria.
+
+    Las misiones 'in_progress' huérfanas se pasan a 'paused': su checkpoint de
+    exploración está persistido, así el usuario puede reanudarlas donde las dejó.
+    """
+    conn = sqlite3.connect(settings.db_path)
+    try:
+        conn.execute("UPDATE missions SET status = 'paused' WHERE status = 'in_progress'")
+        conn.commit()
+    finally:
+        conn.close()
+
+
 async def get_db() -> aiosqlite.Connection:
     settings.db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = await aiosqlite.connect(settings.db_path)

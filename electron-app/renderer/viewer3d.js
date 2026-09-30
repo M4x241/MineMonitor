@@ -22,6 +22,9 @@ export class Viewer3D {
     this._highlightTimer = null;
     this._missionId = null;
     this._highlightGroup = new THREE.Group();
+    this.noRoof = false;
+    this.showPath = true;
+    this.levelFilter = null;
 
     this._buildScene();
     this._buildOverlay();
@@ -74,11 +77,22 @@ export class Viewer3D {
     this.overlay.innerHTML = `
       <div class="v3d-topbar">
         <span class="v3d-title" id="v3dTitle">Mapa</span>
+        <button class="v3d-roof-toggle" id="v3dRoof" title="Alternar entre mina completa y sin techo para ver el camino interno">Ver sin techo</button>
+        <button class="v3d-roof-toggle" id="v3dPath" title="Mostrar/ocultar el recorrido del dron">Recorrido: on</button>
         <button class="v3d-back" id="v3dBack">&larr; Volver</button>
       </div>
       <div class="v3d-controls">
         <label>Voxel size
           <input id="v3dSize" type="range" min="0.5" max="1.5" step="0.05" value="1.0">
+        </label>
+        <label>Nivel
+          <select id="v3dLevel">
+            <option value="">Todos</option>
+            <option value="0">1</option>
+            <option value="1">2</option>
+            <option value="2">3</option>
+            <option value="3">4</option>
+          </select>
         </label>
         <label><input id="v3dGrid" type="checkbox" checked> Mostrar grid</label>
       </div>
@@ -95,10 +109,27 @@ export class Viewer3D {
     this.doc$('v3dBack').addEventListener('click', () => this.onBack && this.onBack());
     this.doc$('v3dSize').addEventListener('input', (e) => {
       this.voxelSize = parseFloat(e.target.value);
-      this.voxelGroup.children.forEach((m) => m.scale.set(this.voxelSize, this.voxelSize, this.voxelSize));
+      this.voxelGroup.children.forEach((m) => {
+        if (m.isInstancedMesh) m.scale.set(this.voxelSize, this.voxelSize, this.voxelSize);
+      });
     });
     this.doc$('v3dGrid').addEventListener('change', (e) => {
       this.grid.visible = e.target.checked;
+    });
+    this.doc$('v3dRoof').addEventListener('click', () => {
+      this.noRoof = !this.noRoof;
+      this.doc$('v3dRoof').textContent = this.noRoof ? 'Ver con techo' : 'Ver sin techo';
+      this.buildMesh(false);
+    });
+    this.doc$('v3dPath').addEventListener('click', () => {
+      this.showPath = !this.showPath;
+      this.doc$('v3dPath').textContent = this.showPath ? 'Recorrido: on' : 'Recorrido: off';
+      this.buildMesh(false);
+    });
+    this.doc$('v3dLevel').addEventListener('change', (e) => {
+      const v = e.target.value;
+      this.levelFilter = v === '' ? null : parseInt(v, 10);
+      this.buildMesh(false);
     });
   }
 
@@ -123,6 +154,20 @@ export class Viewer3D {
     loop();
   }
 
+  async _fetchAllVoxels(missionId) {
+    const size = 20000;
+    let page = 0, voxels = [];
+    for (;;) {
+      const r = await this.fetch('/missions/' + missionId + '/map?page=' + page + '&size=' + size);
+      if (r.status !== 200) throw new Error(r.data?.detail || 'HTTP ' + r.status);
+      const data = r.data || {};
+      voxels = voxels.concat(data.voxels || []);
+      if (!data.has_more) return { voxels, bounds: data.bounds, total: data.total_voxels };
+      page++;
+      if (page > 200) throw new Error('Demasiadas páginas al cargar los voxeles');
+    }
+  }
+
   async loadMap(missionId, missionName) {
     this.doc$('v3dTitle').textContent = 'Misión ' + missionId + (missionName ? ' - ' + missionName : '');
     this._missionId = missionId;
@@ -133,11 +178,10 @@ export class Viewer3D {
     title.textContent = 'Cargando misión ' + missionId + '...';
 
     try {
-      const r = await this.fetch('/missions/' + missionId + '/map');
-      if (r.status !== 200) throw new Error(r.data?.detail || 'HTTP ' + r.status);
-      const data = r.data;
+      const data = await this._fetchAllVoxels(missionId);
       this.voxelData = data.voxels || [];
-      detail.textContent = this.voxelData.length + ' voxels recibidos';
+      this.v3dBounds = data.bounds;
+      detail.textContent = data.voxels.length + ' voxels recibidos';
       this.buildMesh();
     } catch (e) {
       loading.style.display = 'block';
@@ -153,14 +197,13 @@ export class Viewer3D {
   async _refreshMap() {
     if (!this._missionId) return;
     try {
-      const r = await this.fetch('/missions/' + this._missionId + '/map');
-      if (r.status !== 200) return;
-      const data = r.data || {};
+      const data = await this._fetchAllVoxels(this._missionId);
       const fresh = data.voxels || [];
       if (fresh.length === this.voxelData.length) return;
       const prev = new Set(this.voxelData.map((v) => v.pos.x + ',' + v.pos.y + ',' + v.pos.z));
       const added = fresh.filter((v) => !prev.has(v.pos.x + ',' + v.pos.y + ',' + v.pos.z));
       this.voxelData = fresh;
+      this.v3dBounds = data.bounds;
       this.buildMesh();
       if (added.length) {
         this._flashAdded(added);
@@ -190,17 +233,18 @@ export class Viewer3D {
     this._highlightTimer = setTimeout(() => this._highlightGroup.clear(), 1200);
   }
 
-  buildMesh() {
+  buildMesh(reframe = true) {
     this.scene.remove(this.voxelGroup);
     this.voxelGroup = new THREE.Group();
     this.scene.add(this.voxelGroup);
 
     const loading = this.doc$('v3dLoading');
-    const all = this.voxelData;
+    const all = this._voxelsVisible();
     if (!all.length) {
       loading.style.display = 'block';
       this.doc$('v3dLoadTitle').textContent = 'Sin voxeles';
-      this.doc$('v3dLoadDetail').textContent = 'No hay datos para esta misión.';
+      this.doc$('v3dLoadDetail').textContent = 'No hay datos para esta misión' +
+        (this.levelFilter != null ? ' en el nivel ' + (this.levelFilter + 1) : '') + '.';
       return;
     }
 
@@ -209,10 +253,18 @@ export class Viewer3D {
     const key = (p) => p.x + ',' + p.y + ',' + p.z;
     const air = new Map();
     for (const v of all) if (v.state === 1 && !air.has(key(v.pos))) air.set(key(v.pos), true);
-    const walls = [];
+    let walls = [];
     for (const v of all) {
       if (v.state !== 2) continue;
       if (this._hasAirNeighbor(v.pos, air)) walls.push(v);
+    }
+
+    // "Sin techo": quita los bloques que tienen aire justo debajo (techo de los
+    // pasillos), dejando suelo y muros, para poder ver el camino interno desde arriba.
+    let modo = 'mina completa';
+    if (this.noRoof) {
+      walls = walls.filter((v) => !this._hasAirBelow(v.pos, air));
+      modo = 'sin techo';
     }
 
     const boxGeo = this.boxGeo;
@@ -230,20 +282,89 @@ export class Viewer3D {
     im.scale.set(this.voxelSize, this.voxelSize, this.voxelSize);
     this.voxelGroup.add(im);
 
-    const total = all.length;
-    let minX = Infinity, minY = Infinity, minZ = Infinity;
-    let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
-    for (const v of all) {
-      if (v.pos.x < minX) minX = v.pos.x; if (v.pos.y < minY) minY = v.pos.y; if (v.pos.z < minZ) minZ = v.pos.z;
-      if (v.pos.x > maxX) maxX = v.pos.x; if (v.pos.y > maxY) maxY = v.pos.y; if (v.pos.z > maxZ) maxZ = v.pos.z;
+    // Línea del recorrido explorado (voxeles de aire visitados, ordenados por paso).
+    this.voxelGroup.add(this._buildPath(all));
+
+    if (reframe) {
+      const total = all.length;
+      let minX = Infinity, minY = Infinity, minZ = Infinity;
+      let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+      for (const v of all) {
+        if (v.pos.x < minX) minX = v.pos.x; if (v.pos.y < minY) minY = v.pos.y; if (v.pos.z < minZ) minZ = v.pos.z;
+        if (v.pos.x > maxX) maxX = v.pos.x; if (v.pos.y > maxY) maxY = v.pos.y; if (v.pos.z > maxZ) maxZ = v.pos.z;
+      }
+      this.controls.target.set((minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2);
+      this.camera.position.set((minX + maxX) / 2 + 32, (minY + maxY) / 2 + 28, (minZ + maxZ) / 2 + 32);
     }
-    this.controls.target.set((minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2);
-    this.camera.position.set((minX + maxX) / 2 + 32, (minY + maxY) / 2 + 28, (minZ + maxZ) / 2 + 32);
 
     loading.style.display = 'none';
+    let risks = 0, entropySum = 0;
+    for (const v of all) {
+      if ((v.risk | 0) > 0) risks++;
+      entropySum += v.entropy || 0;
+    }
+    const entropyAvg = all.length ? (entropySum / all.length) : 0;
+    let pathLen = 0;
+    for (const v of all) if (v.state === 1 && typeof v.step === 'number') pathLen++;
+    const nivel = this.levelFilter != null ? ('nivel ' + (this.levelFilter + 1)) : 'todos los niveles';
     this.doc$('v3dStats').innerHTML =
-      '<span>' + walls.length + '</span> de pared &middot; <span>' + total + '</span> voxels totales &middot; ' +
-      'X[' + minX + '..' + maxX + '] Y[' + minY + '..' + maxY + '] Z[' + minZ + '..' + maxZ + ']';
+      '<span>' + walls.length + '</span> de pared &middot; <span>' + all.length + '</span> voxels totales &middot; ' +
+      'recorrido <span>' + pathLen + '</span> bloques &middot; riesgo <span>' + risks + '</span> &middot; ' +
+      'entropía media <span>' + entropyAvg.toFixed(2) + '</span> &middot; ' + modo + ' &middot; ' + nivel;
+  }
+
+  _levelIndex(v) {
+    const b = Math.floor(v.pos.x / 112);
+    return b < 0 ? 0 : b > 3 ? 3 : b;
+  }
+
+  _voxelsVisible() {
+    if (this.levelFilter == null) return this.voxelData;
+    return this.voxelData.filter((v) => this._levelIndex(v) === this.levelFilter);
+  }
+
+  _buildPath(all) {
+    const group = new THREE.Group();
+    if (!this.showPath) return group;
+    const visited = all
+      .filter((v) => v.state === 1 && typeof v.step === 'number')
+      .sort((a, b) => a.step - b.step);
+    if (visited.length < 2) return group;
+
+    const material = new THREE.LineBasicMaterial({ color: 0x00ddff });
+    const startDot = new THREE.Mesh(
+      new THREE.SphereGeometry(0.35, 8, 8),
+      new THREE.MeshBasicMaterial({ color: 0x22ff88 })
+    );
+    const endDot = new THREE.Mesh(
+      new THREE.SphereGeometry(0.35, 8, 8),
+      new THREE.MeshBasicMaterial({ color: 0xff4422 })
+    );
+
+    const pts = [];
+    let prev = null;
+    let first = null;
+    const flush = () => {
+      if (pts.length >= 2) {
+        const geo = new THREE.BufferGeometry().setFromPoints(pts);
+        group.add(new THREE.Line(geo, material));
+      }
+      pts.length = 0;
+    };
+    for (const v of visited) {
+      const p = new THREE.Vector3(v.pos.x + 0.5, v.pos.y + 0.5, v.pos.z + 0.5);
+      // Salto grande = cambio de nivel/teletransporte: corta la línea ahí.
+      if (prev && p.distanceTo(prev) > 40) flush();
+      if (!first) first = p.clone();
+      pts.push(p);
+      prev = p;
+    }
+    flush();
+    if (first) startDot.position.copy(first);
+    if (prev) endDot.position.copy(prev);
+    group.add(startDot);
+    group.add(endDot);
+    return group;
   }
 
   _hasAirNeighbor(pos, air) {
@@ -251,6 +372,10 @@ export class Viewer3D {
       if (air.has((pos.x + d[0]) + ',' + (pos.y + d[1]) + ',' + (pos.z + d[2]))) return true;
     }
     return false;
+  }
+
+  _hasAirBelow(pos, air) {
+    return air.has(pos.x + ',' + (pos.y - 1) + ',' + pos.z);
   }
 
   _wallColor(v) {

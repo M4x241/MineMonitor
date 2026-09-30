@@ -68,6 +68,7 @@
 
 <div id="controls">
   <label>Mision ID: <input id="missionId" type="number" value="3" min="1"></label>
+  <label>Token JWT: <input id="token" type="password" placeholder="(opcional) Bearer token" style="width:180px"></label>
   <label>Voxel size: <input id="voxelSize" type="range" min="0.3" max="1.5" step="0.05" value="0.9"></label>
   <label><input id="showSolid" type="checkbox"> Mostrar paredes</label>
   <button onclick="loadMap()">Cargar mapa</button>
@@ -104,6 +105,9 @@ function showError(msg) {
   loadingEl.innerHTML = '<div class="error">Error: ' + msg + '</div>' +
     '<div style="font-size:11px;margin-top:8px;color:#888">Revisa la consola del navegador (F12)</div>';
 }
+
+const savedToken = localStorage.getItem('viewerToken');
+if (savedToken) document.getElementById('token').value = savedToken;
 
 try {
   setLoading('Three.js cargado OK', 'ok');
@@ -203,13 +207,21 @@ try {
   window.loadMap = async function() {
     const mid = document.getElementById('missionId').value;
     const showSolid = document.getElementById('showSolid').checked;
+    loadDetail.textContent = 'Cargando mision ' + mid + '...';
     loadingEl.style.display = 'block';
     loadingEl.innerHTML = '<div>Cargando mision '+mid+'...</div>';
     setLoading('Fetch /missions/'+mid+'/map ...');
 
+    const tokenEl = document.getElementById('token');
+    const token = (tokenEl.value || '').trim();
+    if (token) localStorage.setItem('viewerToken', token);
+
     try {
-      const resp = await fetch('/missions/' + mid + '/map');
+      const headers = {};
+      if (token) headers['Authorization'] = 'Bearer ' + token;
+      const resp = await fetch('/missions/' + mid + '/map', { headers });
       setLoading('HTTP '+resp.status+' - parseando JSON...');
+      if (resp.status === 401) throw new Error('Necesitas un token JWT válido (campo "Token JWT")');
       if (!resp.ok) throw new Error('HTTP ' + resp.status);
       const data = await resp.json();
       voxelData = data.voxels || [];

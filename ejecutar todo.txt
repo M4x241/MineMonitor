@@ -14,7 +14,7 @@ Despues de encender, abre en el navegador:
 
 Primero enciende el backend:
 bash /home/ghost/Documents/Minecraft/scripts/start_all.sh
-Despues abre la app de escritorio:
+##Despues abre la app de escritorio:
 cd /home/ghost/Documents/Minecraft/electron-app && npm start
 
 

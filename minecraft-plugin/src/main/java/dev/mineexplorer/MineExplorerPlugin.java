@@ -109,19 +109,50 @@ public final class MineExplorerPlugin extends JavaPlugin {
     }
 
     private void keepMineLoaded() {
-        int r = regionHalf / 16 + 1;
+        // Cubre el span completo de los 4 niveles (cajas a lo largo de X) + margen
+        // para que el mob, el raycast y los bloques funcionen en cualquier nivel.
+        int minX = Integer.MAX_VALUE, maxX = Integer.MIN_VALUE;
+        int minZ = Integer.MAX_VALUE, maxZ = Integer.MIN_VALUE;
+        for (MineLevelSpec l : generator.getLevels()) {
+            minX = Math.min(minX, l.minX());
+            maxX = Math.max(maxX, l.maxX());
+            minZ = Math.min(minZ, l.minZ());
+            maxZ = Math.max(maxZ, l.maxZ());
+        }
+        int pad = 2;
+        int cx0 = (minX - pad) >> 4, cx1 = (maxX + pad) >> 4;
+        int cz0 = (minZ - pad) >> 4, cz1 = (maxZ + pad) >> 4;
         int tickets = 0;
-        for (int cx = -r; cx <= r; cx++) {
-            for (int cz = -r; cz <= r; cz++) {
+        for (int cx = cx0; cx <= cx1; cx++) {
+            for (int cz = cz0; cz <= cz1; cz++) {
                 world.getChunkAt(cx, cz).addPluginChunkTicket(this);
                 tickets++;
             }
         }
-        getLogger().info("Tickets de carga añadidos a " + tickets + " chunks de la mina");
+        getLogger().info("Tickets de carga añadidos a " + tickets + " chunks de la mina ("
+                + generator.levelCount() + " niveles)");
     }
 
     public MineGenerator generator() {
         return generator;
+    }
+
+    /**
+     * Regenera la mina completa con una seed nueva: primero devuelve la región
+     * a piedra (elimina galerías previas) y después talla los 4 niveles.
+     */
+    public void regenerate(String newSeed) {
+        getLogger().info("Regenerando mina con seed=" + newSeed + " (reset + {"
+                + generator.levelCount() + " niveles})");
+        generator.resetRegion();
+        generator.generate();
+        getConfig().set("seed", newSeed);
+        getConfig().set("generated-seed", newSeed);
+        saveConfig();
+        seed = newSeed;
+        explorer.spawn();
+        getLogger().info("Mina regenerada: seed=" + newSeed
+                + " spawn=" + generator.getDroneSpawn());
     }
 
     public ExplorerMob explorer() {
@@ -153,12 +184,10 @@ public final class MineExplorerPlugin extends JavaPlugin {
             }
             case "regen" -> {
                 if (args.length > 1) {
-                    getConfig().set("seed", args[1]);
-                    saveConfig();
-                    seed = args[1];
+                    regenerate(args[1]);
+                } else {
+                    regenerate(seed);
                 }
-                generator.generateIfNeeded(true);
-                explorer.spawn();
                 sender.sendMessage("Mina regenerada con seed=" + seed);
             }
             case "world" -> {

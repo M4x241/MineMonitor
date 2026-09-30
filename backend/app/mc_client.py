@@ -80,6 +80,10 @@ class MCBridgeClient:
     async def status(self) -> dict:
         return await self.request({"type": "status"})
 
+    async def regen(self, seed: str) -> dict:
+        """Regenera el mundo de la mina con la seed dada (reset + 4 niveles)."""
+        return await self.request({"type": "regen", "seed": seed}, timeout=60.0)
+
     async def position(self) -> dict:
         return await self.request({"type": "position"})
 

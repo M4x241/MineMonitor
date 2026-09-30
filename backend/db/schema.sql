@@ -57,3 +57,11 @@ CREATE TABLE IF NOT EXISTS voxeles (
     last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (mission_id, coord_x, coord_y, coord_z)
 );
+
+-- Estado del autómata de exploración: permite reanudar una misión pausada
+-- exactamente donde se dejó, incluso después de reiniciar el backend/la máquina.
+CREATE TABLE IF NOT EXISTS exploration_state (
+    mission_id INTEGER PRIMARY KEY REFERENCES missions(id) ON DELETE CASCADE,
+    state_json TEXT NOT NULL,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);

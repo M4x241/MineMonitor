@@ -160,6 +160,7 @@
   .badge.completed { color: #4f4; border-color: #2a5a2a; }
   .badge.paused { color: #fa0; border-color: #6a4a0a; }
   .badge.canceled { color: #f66; border-color: #6a2a2a; }
+  .map-card .metric { color: #9cf; margin-left: 6px; }
   .view3d-btn {
     background: #1a3a5c; border: 1px solid #4af; color: #fff; padding: 8px 14px;
     border-radius: 6px; font-size: 12px; white-space: nowrap;
@@ -233,9 +234,14 @@
   .v3d-topbar {
     position: absolute; top: 0; left: 0; right: 0; height: 42px;
     background: rgba(13,13,20,0.92); border-bottom: 1px solid #222;
-    display: flex; align-items: center; padding: 0 14px;
+    display: flex; align-items: center; padding: 0 14px; gap: 10px;
   }
   .v3d-topbar .v3d-title { color: #fff; font-size: 13px; font-weight: 600; }
+  .v3d-roof-toggle {
+    background: #15151d; border: 1px solid #333; color: #ccc; padding: 6px 14px;
+    border-radius: 6px; font-size: 12px;
+  }
+  .v3d-roof-toggle:hover { border-color: #4af; color: #fff; }
   .v3d-back {
     margin-left: auto; background: #15151d; border: 1px solid #333; color: #ccc;
     padding: 6px 14px; border-radius: 6px; font-size: 12px;
@@ -247,6 +253,10 @@
   }
   .v3d-controls label { display: block; margin: 4px 0; color: #bbb; }
   .v3d-controls input[type=range] { vertical-align: middle; }
+  .v3d-controls select {
+    background: #15151d; color: #ccc; border: 1px solid #333; border-radius: 4px;
+    padding: 2px 6px; font-size: 11px;
+  }
   .v3d-stats {
     position: absolute; bottom: 12px; left: 12px; font-size: 11px; color: #8f8;
     background: rgba(0,0,0,0.7); padding: 6px 12px; border-radius: 6px;
@@ -576,9 +586,12 @@ function renderMissionList() {
           ? '<button class="switch-btn" title="Cargar esa mina en Minecraft (sin explorar)">Ver en Minecraft</button>' : '') +
       '<button class="view3d-btn">Ver en 3D</button>';
     card.querySelector('.map-name').textContent = m.name || ('Misión ' + m.id);
-    card.querySelector('.map-meta').innerHTML =
-      '<span class="badge ' + m.status + '">' + (STATUS_LABELS[m.status] || m.status.replace(/_/g, ' ')) + '</span>' +
+    let meta = '<span class="badge ' + m.status + '">' + (STATUS_LABELS[m.status] || m.status.replace(/_/g, ' ')) + '</span>' +
       'Mina: ' + (m.mine_name || 'Mina ' + m.mine_id);
+    if (typeof m.coverage_percent === 'number') meta += '<span class="metric">Cob. ' + m.coverage_percent + '%</span>';
+    if (m.risk_detections) meta += '<span class="metric">Riesgo ' + m.risk_detections + '</span>';
+    if (typeof m.final_entropy === 'number') meta += '<span class="metric">Entropía ' + m.final_entropy + '</span>';
+    card.querySelector('.map-meta').innerHTML = meta;
     if (m.status === 'pending') {
       card.querySelector('.start-btn').addEventListener('click', () => startMissionFromCard(m.id));
     }

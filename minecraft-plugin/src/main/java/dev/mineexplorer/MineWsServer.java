@@ -85,6 +85,7 @@ public class MineWsServer extends WebSocketServer {
             switch (type) {
                 case "status" -> reply(conn, id, buildStatus());
                 case "position" -> reply(conn, id, buildPosition());
+                case "regen" -> reply(conn, id, handleRegen(req));
                 case "move" -> reply(conn, id, handleMove(req));
                 case "teleport" -> reply(conn, id, handleTeleport(req));
                 case "raycast" -> reply(conn, id, handleRaycast(req));
@@ -98,6 +99,15 @@ public class MineWsServer extends WebSocketServer {
         }
     }
 
+    // ------------------------------------------------------------------ regen
+
+    private JsonObject handleRegen(JsonObject req) {
+        String newSeed = req.has("seed") ? req.get("seed").getAsString() : plugin.seed();
+        plugin.regenerate(newSeed);
+        plugin.getLogger().info("WS: mina regenerada con seed=" + newSeed);
+        return buildStatus();
+    }
+
     // ------------------------------------------------------------------ status
 
     private JsonObject buildStatus() {
@@ -108,6 +118,7 @@ public class MineWsServer extends WebSocketServer {
         s.addProperty("world", world.getName());
         s.addProperty("seed", plugin.seed());
         s.addProperty("regionHalf", generator.getRegionHalf());
+        s.addProperty("levelCount", generator.levelCount());
         s.addProperty("riskBlocks", generator.getRiskBlocks());
         s.addProperty("obstructionBlocks", generator.getObstructionBlocks());
         s.addProperty("uptimeSec", (System.currentTimeMillis() - startMillis) / 1000L);
@@ -117,6 +128,29 @@ public class MineWsServer extends WebSocketServer {
         s.addProperty("mobValid", explorer.isValid());
         s.addProperty("mobType", explorer.getTypeName());
         s.addProperty("moving", !explorer.isAtTarget());
+
+        // Los 4 niveles: spawn y caja (bounds) de cada uno para que el autómata
+        // explore cada red con su propio límite y no se deje atraer a otras.
+        JsonArray levels = new JsonArray();
+        for (MineLevelSpec l : generator.getLevels()) {
+            JsonObject jo = new JsonObject();
+            jo.addProperty("name", l.name);
+            JsonObject origin = new JsonObject();
+            origin.addProperty("x", l.centerX + 0.5);
+            origin.addProperty("y", l.centerY);
+            origin.addProperty("z", l.centerZ + 0.5);
+            jo.add("spawn", origin);
+            JsonObject bounds = new JsonObject();
+            bounds.addProperty("minX", l.minX());
+            bounds.addProperty("maxX", l.maxX());
+            bounds.addProperty("minY", l.minY);
+            bounds.addProperty("maxY", l.maxY);
+            bounds.addProperty("minZ", l.minZ());
+            bounds.addProperty("maxZ", l.maxZ());
+            jo.add("bounds", bounds);
+            levels.add(jo);
+        }
+        s.add("mineLevels", levels);
         return s;
     }
 
