@@ -1,173 +1,74 @@
-# Exploracion Autonoma de Minas Subterraneas
+# Mine Explorer 3D
 
-## Objetivo del Proyecto
+## Objetivo
 
-Desarrollar un prototipo funcional de software para el **mapeo y la exploracion autonoma** en entornos subterraneos simulados, usando:
+Desarrollar un prototipo funcional de software para el mapeo y la exploración autónoma en entornos subterráneos simulados, utilizando teoría de la información (Entropía de Shannon) para la planificación de trayectorias (Next-Best-View) y redes neuronales convolucionales 3D (3D-CNN) para la segmentación semántica del terreno y la detección de riesgos estructurales.
 
-- **Teoria de la Informacion** (Entropia de Shannon) para planificar trayectorias optimas (Next-Best-View / NBV).
-- **Redes Neuronales Convolucionales 3D (3D-CNN)** para segmentacion semantica del terreno y deteccion de riesgos estructurales en tiempo real.
+## Stack Tecnológico
 
-El agente autonomo (dron) opera dentro de una cueva simulada en Minecraft, recolectando datos volumetricos (voxeles) que alimentan al pipeline de IA.
-
-## Stack Tecnologico
-
-| Componente | Tecnologia | Funcion |
+| Componente | Tecnología | Función |
 |---|---|---|
-| **Simulador** | Minecraft Paper 26.2 (headless, sin cliente) | Genera la cueva 3D, provee LiDAR (raycast) y datos de bloques |
-| **Backend API** | Python 3.14 + FastAPI + uvicorn | REST API, auth JWT, puente WebSocket al simulador |
-| **Puente MC** | WebSocket (websockets 17) | Comandos: move, teleport, raycast, blocks, ground_truth |
-| **BD** | SQLite (aiosqlite) | Almacena usuarios, minas, misiones, voxeles (mapa 3D) |
-| **IA (futuro)** | PyTorch + 3D-CNN | Entrenamiento de modelo de segmentacion de terreno |
-| **Frontend (futuro)** | Electron + Three.js | Dashboard, login, visor 3D del mapa |
+| Simulador | Minecraft Paper 26.2 (headless) | Generación del entorno subterráneo, raycasting LiDAR y obtención de ground truth |
+| Backend API | Python 3.14 + FastAPI + Uvicorn | REST API, autenticación JWT, lógica de exploración y puente con Minecraft |
+| Puente Minecraft | WebSocket (websockets 17) | Comunicación con el plugin de Paper (movimiento, raycast, bloques) |
+| Base de Datos | SQLite + aiosqlite | Almacenamiento de usuarios, minas, misiones, voxeles y checkpoints |
+| IA | PyTorch + 3D-CNN | Segmentación y detección de riesgos |
+| Cliente | Electron + Three.js | Aplicación de escritorio para gestión, visualización y exportación 3D |
 
 ## Arquitectura del Sistema
 
 ```
-Electron (futuro) <---> FastAPI Backend <---> WebSocket --> Minecraft Plugin
-     |                       |                                    |
-  Dashboard              SQLite DB                          Paper Server
-  Login                  /auth/*                           Generador de cueva
-  Visor 3D               /mines/*                         ExplorerMob (VEX)
-                         /missions/*                      LiDAR (raycast)
-                         /mc/*                            Ground truth
+Aplicación Electron  <-->  FastAPI Backend  <-->  WebSocket  <-->  Paper Server (Minecraft)
+        |                        |                                      |
+     UI + Visor 3D           SQLite DB                            ExplorerMob (VEX)
+                            /auth, /mines, /missions            LiDAR / Raycast
+                            /mc, /exports                       Generador de cuevas
 ```
 
 ## Estructura del Proyecto
 
 ```
 Minecraft/
-├── electron-app/
-│   ├── main.js              # Electron main process
-│   ├── preload.js           # IPC bridge (contextBridge)
-│   ├── renderer/
-│   │   └── index.html       # Visor 3D (Three.js + Electron IPC)
-│   ├── package.json
-│   └── node_modules/
-├── backend/
-│   ├── app/
-│   │   ├── main.py           # FastAPI app, lifespan, CORS
-│   │   ├── config.py         # Variables de entorno
-│   │   ├── db.py             # SQLite async (aiosqlite)
-│   │   ├── security.py       # JWT + bcrypt
-│   │   ├── models.py         # Pydantic schemas (request/response)
-│   │   ├── mc_client.py      # WebSocket client → Paper plugin
-│   │   └── routers/
-│   │       ├── auth.py       # POST /register, /login, GET /me
-│   │       ├── mines.py      # CRUD /mines
-│   │       ├── missions.py   # CRUD /missions + start/stop + /map
-│   │       └── mc.py         # /mc/status, move, teleport, raycast, blocks
-│   ├── db/
-│   │   └── schema.sql        # Esquema SQLite corregido
-│   ├── data/
-│   │   └── mine_explorer.db  # Base de datos (auto-creada)
-│   ├── static/
-│   │   └── viewer.html       # Visor 3D web (Three.js)
-│   ├── gen_fake_cave.py      # Generador de cueva fake → DB
-│   ├── requirements.txt
-│   └── .venv/
-├── minecraft-plugin/
-│   ├── src/main/java/dev/mineexplorer/
-│   │   ├── MineExplorerPlugin.java   # Plugin principal + watchdog
-│   │   ├── MineGenerator.java        # Generador determinista de cueva
-│   │   ├── ExplorerMob.java          # Control del dron (VEX NoAI)
-│   │   └── MineWsServer.java         # Servidor WebSocket + DDA raycast
-│   └── build/libs/MineExplorer-0.1.0-all.jar
-├── server/
-│   ├── paper.jar                     # Paper 26.2 build 107
-│   ├── eula.txt
-│   └── server.properties
-├── scripts/
-│   ├── setup_server.sh       # Descarga Paper + configura
-│   ├── run_server.sh         # Compila plugin + arranca server
-│   ├── run_backend.sh        # Arranca FastAPI
-│   ├── start_all.sh          # Arranca todo (MC + backend)
-│   └── stop_all.sh           # Apaga todo
-├── dbscript.js                       # Esquema SQL original del usuario
-└── README.md                         # Este archivo
+├── electron-app/        # Aplicación Electron (única interfaz)
+│   ├── main.js          # Proceso principal y puente IPC
+│   ├── preload.js       # ContextBridge
+│   └── renderer/        # Interfaz (index.html, viewer3d.js)
+├── backend/             # API FastAPI
+│   ├── app/             # Código de la aplicación
+│   │   ├── routers/     # Endpoints REST
+│   │   ├── mc_launcher.py
+│   │   ├── mc_client.py
+│   │   └── exporters.py
+│   ├── db/              # Esquema SQLite
+│   └── data/            # Datos persistentes
+└── manuales/            # Documentación del proyecto
 ```
 
-## Base de Datos (SQLite)
+## Requisitos
 
-### Tabla `voxeles` — Mapa 3D de la cueva
+- Node.js + npm
+- Python 3.14
+- Servidor Minecraft Paper 26.2 (opcional para ejecución completa)
 
-| Campo | Tipo | Descripcion |
-|---|---|---|
-| mission_id | int (FK) | Mision a la que pertenece |
-| coord_x, coord_y, coord_z | int | Posicion 3D del voxel (PK compuesta) |
-| state | 0/1/2 | 0=Sin explorar, 1=Explorado, 2=Bloqueado |
-| risk_label | 0/1/2/3 | 0=Seguro, 1=Riesgo medio, 2=Riesgo alto, 3=Escombros |
-| confidence | float | Confianza del modelo (0-1) |
-| entropy_value | float | Entropia de Shannon local (1.0 = maxima incertidumbre) |
-| mission_step | int | Paso de la mision en que se registro |
+## Cómo ejecutar el proyecto
 
-### Estados de una mision
-
-```
-pending → in_progress → completed
-                  ↕
-                paused
-                  ↓
-              canceled
-```
-
-## Como Ejecutar
-
-### 1. Arrancar todo (recomendado)
-
-```bash
-bash scripts/start_all.sh
-# Visor 3D: http://127.0.0.1:8000/static/viewer.html
-# Swagger:  http://127.0.0.1:8000/docs
-```
-
-### 2. Visor de escritorio (Electron)
-
-```bash
-cd electron-app && npm start
-# Requiere el backend corriendo (start_all.sh primero)
-```
-
-### 3. Apagar todo
-
-```bash
-bash scripts/stop_all.sh
-```
-
-### 3. Generar cueva fake en la DB (sin Minecraft)
+### 1) Backend (FastAPI)
 
 ```bash
 cd backend
-python gen_fake_cave.py
-# Crea ~5000 voxeles en la mision existente
+python -m venv .venv
+source .venv/bin/activate  # Linux/Mac
+# .venv\Scripts\activate   # Windows
+pip install -r requirements.txt
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-### 4. Ver el mapa 3D
-
-Abrir `http://127.0.0.1:8000/static/viewer.html` en el navegador.
-
-### 5. Probar la API
+### 2) Aplicación Electron
 
 ```bash
-TOKEN=$(curl -s -X POST http://127.0.0.1:8000/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"identifier":"max@test.com","password":"clave12345"}' \
-  | python3 -c "import sys,json;print(json.load(sys.stdin)['access_token'])")
-
-# Ver mapa 3D de la mision 3
-curl -s http://127.0.0.1:8000/missions/3/map -H "Authorization: Bearer $TOKEN" | python3 -m json.tool
-
-# Estado del simulador
-curl -s http://127.0.0.1:8000/mc/status -H "Authorization: Bearer $TOKEN"
-
-# Mover el dron
-curl -s -X POST http://127.0.0.1:8000/mc/move \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"target":{"x":10,"y":50,"z":10},"speed":2}'
+cd electron-app
+npm install
+npm start
 ```
 
-## Sprint Actual
-
-**Sprint 2** (11-26 Agosto): Generacion de galerias y recoleccion de datos volumetricos.
-
-Estado: Backend + plugin compilan. Puente WebSocket funciona (move, raycast DDA, ground truth). Chunk tickets activos para evitar UNLOAD. Cuevas generadas deterministicamente. Falta: pipeline de exploracion autonomo (Sprint 5) y 3D-CNN (Sprint 3-4).
+La aplicación se conectará automáticamente al backend en `http://127.0.0.1:8000`. Toda la funcionalidad está disponible exclusivamente desde la aplicación Electron.

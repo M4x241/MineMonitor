@@ -345,24 +345,34 @@ async def _record_blocks(mission_id: int, center: dict, radius: int, step: int) 
     blocks = resp.get("blocks", [])
 
     # Inferencia en lote sobre los bloques sólidos (con 7x7x7 de contexto).
+    # El trabajo (indice + parches + CNN) es CPU puro: se ejecuta en un hilo
+    # aparte para NO bloquear el event-loop de FastAPI (si no, /map y /pause
+    # se cuelgan segundos mientras la exploración avanza).
     preds: dict[tuple, tuple] = {}
     if predictor:
         try:
-            from .cnn_model import build_grid
-            grids, targets = [], []
-            for blk in blocks:
-                if blk.get("material") in _AIR_MATERIALS:
-                    continue
-                x, y, z = blk["x"], blk["y"], blk["z"]
-                grid = build_grid(blocks, x, y, z)
-                if (grid == 7).any():
-                    continue
-                grids.append(grid)
-                targets.append((x, y, z))
-            if grids:
-                labels, confs = predictor.predict_grids(grids)
-                for (x, y, z), lab, conf in zip(targets, labels.tolist(), confs.tolist()):
-                    preds[(x, y, z)] = (int(lab), float(conf))
+            def _predict_all():
+                from .cnn_model import _build_index, build_grid
+
+                index = _build_index(blocks)
+                grids, targets = [], []
+                for blk in blocks:
+                    if blk.get("material") in _AIR_MATERIALS:
+                        continue
+                    x, y, z = blk["x"], blk["y"], blk["z"]
+                    grid = build_grid(index, x, y, z)
+                    if (grid == 7).any():
+                        continue
+                    grids.append(grid)
+                    targets.append((x, y, z))
+                out = {}
+                if grids:
+                    labels, confs = predictor.predict_grids(grids)
+                    for (x, y, z), lab, conf in zip(targets, labels.tolist(), confs.tolist()):
+                        out[(x, y, z)] = (int(lab), float(conf))
+                return out
+
+            preds = await asyncio.to_thread(_predict_all)
         except Exception as exc:  # noqa: BLE001
             log.warning("Inferencia 3D-CNN falló (%s); voxeles con heurística", exc)
 

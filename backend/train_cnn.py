@@ -11,6 +11,7 @@ Al terminar restaura el mundo a la mina del usuario.
 import asyncio
 import random
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -18,17 +19,22 @@ import torch
 import torch.nn as nn
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from app.cnn_model import RISK_BY_GROUP, RiskCnn3D, build_grid, encode_patch
+from app.cnn_model import RiskCnn3D, build_grid, encode_patch
 from app.config import settings
 from app.mc_client import bridge
 
 PATCH = 7
 USER_MINED_SEED = "1419792764"
-TRAIN_SEEDS = ["1419792764", "2024073101", "998877665", "3141592653"]
-RISK_CAP = 400   # max parches de riesgo por mina
+# Variedad de semillas para cubrir también escombros (clase 3) y lava (clase 4).
+TRAIN_SEEDS = [
+    "1419792764", "2024073101", "998877665", "3141592653",
+    "584301002", "7070707", "123489012", "900912345",
+]
+RISK_CAP = 350   # max parches de riesgo por mina
 SAFE_CAP = 400   # max parches seguros por mina
-LATTICE_STEP = 10
+LATTICE_STEP = 8
 MODEL_DIR = settings.cnn_model_path.parent
+CLASS_NAMES = ["seguro", "grieta", "escombro", "derrubio", "lava/magma"]
 
 
 def _augment_orientations(grid: np.ndarray) -> list:
@@ -202,7 +208,39 @@ def train(X, y, epochs: int = 26, batch: int = 128):
         print(f"epoch {epoch:02d} | loss {run_loss / total:.4f} | train acc "
               f"{hits / total:.3f} | val acc {acc:.3f}", flush=True)
 
-    return best_state or model.state_dict(), best_acc
+    # Métricas finales sobre validación con el mejor checkpoint.
+    final = RiskCnn3D().to(device)
+    final.load_state_dict(best_state or model.state_dict())
+    final.eval()
+    with torch.inference_mode():
+        Xva = torch.from_numpy(np.stack([encode_patch(g) for g in xva])).to(device)
+        predv = final(Xva).argmax(dim=1).cpu().numpy()
+
+    cm = np.zeros((5, 5), dtype=np.int64)
+    for t, p in zip(yva, predv):
+        cm[t, p] += 1
+
+    report = [f"CNN 3D - reporte de entrenamiento ({time.strftime('%Y-%m-%d %H:%M:%S')})",
+              f"parches balanceados: {len(y)} | train: {len(ytr)} | val: {len(yva)}",
+              f"val accuracy (mejor epoch): {best_acc:.4f}",
+              f"distribución total: {np.bincount(y, minlength=5).tolist()}",
+              ""]
+    report.append("matriz de confusión (filas=real, cols=pred):")
+    header = "        " + "".join(f"{CLASS_NAMES[c][:9]:>9}" for c in range(5))
+    report.append(header)
+    for r in range(5):
+        report.append(f"{CLASS_NAMES[r][:9]:>9}" + "".join(f"{cm[r, c]:>9}" for c in range(5)))
+    report.append("")
+    report.append("precisión / recall por clase:")
+    for c in range(5):
+        tp = cm[c, c]
+        n_real = cm[c].sum()
+        n_pred = cm[:, c].sum()
+        prec = tp / n_pred if n_pred else 0.0
+        rec = tp / n_real if n_real else 0.0
+        report.append(f"  {CLASS_NAMES[c]:>11}: prec {prec:.3f} | recall {rec:.3f} | reales {n_real}")
+
+    return (best_state or model.state_dict()), best_acc, cm, report
 
 
 async def main() -> None:
@@ -224,9 +262,14 @@ async def main() -> None:
     print(f"[dataset] total parches balanceados: {len(y)} | clases: "
           f"{np.bincount(y, minlength=5).tolist()}", flush=True)
 
+    # Artefacto 1: dataset crudo (grids int8 + etiquetas) para reproducibilidad.
+    dataset_path = MODEL_DIR / "cnn_dataset.npz"
+    np.savez(dataset_path, X=X.astype(np.int8), y=y, seeds=np.array(TRAIN_SEEDS))
+    print(f"Dataset guardado en {dataset_path}", flush=True)
+
     net_path = settings.cnn_model_path
     print("Entrenando 3D-CNN...", flush=True)
-    state, best_acc = train(X, y)
+    state, best_acc, cm, report = train(X, y)
     torch.save({
         "state_dict": state,
         "meta": {
@@ -236,9 +279,18 @@ async def main() -> None:
             "val_acc": round(float(best_acc), 4),
             "trained_on": TRAIN_SEEDS,
             "n": int(len(y)),
+            "histogram": np.bincount(y, minlength=5).tolist(),
+            "confusion": cm.tolist(),
+            "class_names": CLASS_NAMES,
         },
     }, net_path)
     print(f"Checkpoint guardado en {net_path} (val acc {best_acc:.3f})", flush=True)
+
+    # Artefacto 2: reporte legible para la memoria/evidencia.
+    report_path = MODEL_DIR / "cnn_report.txt"
+    report_path.write_text("\n".join(report) + "\n", encoding="utf-8")
+    print("Reporte guardado en %s" % report_path, flush=True)
+    print("\n".join(report), flush=True)
 
     # Restaurar el mundo a la mina del usuario.
     await bridge.regen(USER_MINED_SEED)

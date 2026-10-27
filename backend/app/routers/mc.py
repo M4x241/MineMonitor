@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 
 from ..mc_client import bridge
+from ..mc_launcher import ensure_server_running
 from ..models import BlocksRequest, GroundTruthRequest, MoveRequest, Pos, RaycastRequest, TeleportRequest
 from ..security import get_current_user
 
@@ -62,3 +63,12 @@ async def ground_truth(body: GroundTruthRequest, _=Depends(get_current_user)):
     """Verdad de terreno: etiquetas de riesgo por vóxel para entrenar la 3D-CNN."""
     await _require_connected()
     return await bridge.ground_truth(body.center.model_dump(), body.radius)
+
+
+@router.post("/start")
+async def start_server(_=Depends(get_current_user)):
+    """Arranca (o asegura que esté corriendo) el servidor de Minecraft."""
+    ok = await ensure_server_running()
+    if not ok:
+        raise HTTPException(status_code=500, detail="No se pudo arrancar el servidor de Minecraft")
+    return {"ok": True}

@@ -2,6 +2,9 @@ console.log('[viewer3d] module loaded');
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { PLYLoader } from 'three/addons/loaders/PLYLoader.js';
+import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
+import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 
 const _NEIGHBORS = [
   [1, 0, 0], [-1, 0, 0],
@@ -25,6 +28,7 @@ export class Viewer3D {
     this.noRoof = false;
     this.showPath = true;
     this.levelFilter = null;
+    this.externalMode = false;
 
     this._buildScene();
     this._buildOverlay();
@@ -82,10 +86,10 @@ export class Viewer3D {
         <button class="v3d-back" id="v3dBack">&larr; Volver</button>
       </div>
       <div class="v3d-controls">
-        <label>Voxel size
+        <label id="v3dSizeWrap">Voxel size
           <input id="v3dSize" type="range" min="0.5" max="1.5" step="0.05" value="1.0">
         </label>
-        <label>Nivel
+        <label id="v3dLevelWrap">Nivel
           <select id="v3dLevel">
             <option value="">Todos</option>
             <option value="0">1</option>
@@ -169,8 +173,11 @@ export class Viewer3D {
   }
 
   async loadMap(missionId, missionName) {
-    this.doc$('v3dTitle').textContent = 'Misión ' + missionId + (missionName ? ' - ' + missionName : '');
+    this.externalMode = false;
     this._missionId = missionId;
+    this._setMissionControls(true);
+    this.grid.position.set(0, -0.5, 0);
+    this.doc$('v3dTitle').textContent = 'Misión ' + missionId + (missionName ? ' - ' + missionName : '');
     const loading = this.doc$('v3dLoading');
     const title = this.doc$('v3dLoadTitle');
     const detail = this.doc$('v3dLoadDetail');
@@ -192,6 +199,149 @@ export class Viewer3D {
 
     if (this._refreshTimer) clearInterval(this._refreshTimer);
     this._refreshTimer = setInterval(() => this._refreshMap(), 3000);
+  }
+
+  // ── Modelos externos (PLY / OBJ) ─────────────────────
+  async loadExternal(files) {
+    if (this._refreshTimer) { clearInterval(this._refreshTimer); this._refreshTimer = null; }
+    this._missionId = null;
+    this.externalMode = true;
+    this._highlightGroup.clear();
+
+    const loading = this.doc$('v3dLoading');
+    const names = (files || []).map((f) => f.name).join(', ');
+    loading.style.display = 'block';
+    this.doc$('v3dTitle').textContent = 'Importado - ' + names;
+    this.doc$('v3dLoadTitle').textContent = 'Cargando modelo...';
+    this.doc$('v3dLoadDetail').textContent = names;
+    this._setMissionControls(false);
+
+    try {
+      const objects = this._parseExternal(files || []);
+      if (!objects.length) throw new Error('No se encontró ningún archivo PLY u OBJ en la selección');
+      this._buildExternal(objects);
+    } catch (e) {
+      loading.style.display = 'block';
+      this.doc$('v3dLoadTitle').textContent = 'Error al importar';
+      this.doc$('v3dLoadDetail').textContent = e.message || String(e);
+    }
+  }
+
+  _parseExternal(files) {
+    const out = [];
+    const plyFile = files.find((f) => f.ext === 'ply');
+    const objFile = files.find((f) => f.ext === 'obj');
+    const mtlFile = files.find((f) => f.ext === 'mtl');
+
+    if (plyFile) {
+      const d = plyFile.data;
+      const ab = d.buffer.slice(d.byteOffset, d.byteOffset + d.byteLength);
+      const geo = new PLYLoader().parse(ab, '');
+      if (!geo.getAttribute('normal')) geo.computeVertexNormals();
+      const hasFaces = !!geo.index && geo.index.count > 0;
+      out.push({ name: plyFile.name, geometry: geo, kind: hasFaces ? 'mesh' : 'points' });
+    }
+
+    if (objFile) {
+      let materials = null;
+      if (mtlFile) {
+        try {
+          const mtlText = new TextDecoder().decode(mtlFile.data);
+          materials = new MTLLoader().parse(mtlText, '');
+          materials.preload();
+        } catch (_e) {
+          materials = null;
+        }
+      }
+      const objText = new TextDecoder().decode(objFile.data);
+      const loader = new OBJLoader();
+      if (materials) loader.setMaterials(materials);
+      const group = loader.parse(objText);
+      group.traverse((child) => {
+        if (!child.isMesh || !child.geometry) return;
+        if (!child.geometry.getAttribute('normal')) child.geometry.computeVertexNormals();
+        const hasColor = !!child.geometry.getAttribute('color');
+        if (!materials) {
+          child.material = new THREE.MeshLambertMaterial({ color: 0xbfc4cc, vertexColors: hasColor });
+        } else if (hasColor) {
+          child.material.vertexColors = true;
+          child.material.needsUpdate = true;
+        }
+      });
+      out.push({ name: objFile.name, object: group, kind: 'mesh' });
+    }
+    return out;
+  }
+
+  _buildExternal(objects) {
+    this.scene.remove(this.voxelGroup);
+    this.voxelGroup = new THREE.Group();
+    this.scene.add(this.voxelGroup);
+
+    const box = new THREE.Box3();
+    let verts = 0;
+    let tris = 0;
+    for (const o of objects) {
+      if (o.kind === 'points') {
+        const geo = o.geometry;
+        const hasColor = !!geo.getAttribute('color');
+        const mat = new THREE.PointsMaterial({
+          size: 0.8, vertexColors: hasColor, color: hasColor ? 0xffffff : 0x66ccff,
+        });
+        this.voxelGroup.add(new THREE.Points(geo, mat));
+        geo.computeBoundingBox();
+        if (geo.boundingBox) box.union(geo.boundingBox);
+        verts += geo.getAttribute('position').count;
+      } else {
+        let target = o.object;
+        if (!target) {
+          const geo = o.geometry;
+          const hasColor = !!geo.getAttribute('color');
+          target = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({
+            color: 0xbfc4cc, vertexColors: hasColor, side: THREE.DoubleSide,
+          }));
+        }
+        this.voxelGroup.add(target);
+        target.traverse((c) => {
+          if (!c.isMesh || !c.geometry) return;
+          const pos = c.geometry.getAttribute('position');
+          if (!pos) return;
+          verts += pos.count;
+          tris += c.geometry.index ? c.geometry.index.count / 3 : pos.count / 3;
+        });
+        box.expandByObject(target);
+      }
+    }
+
+    if (box.isEmpty()) throw new Error('El modelo no tiene geometría visible');
+
+    const size = box.getSize(new THREE.Vector3());
+    const center = box.getCenter(new THREE.Vector3());
+    const radius = Math.max(size.x, size.y, size.z, 1);
+
+    this.voxelGroup.traverse((c) => {
+      if (c.isPoints && c.material) c.material.size = Math.max(radius / 250, 0.05);
+    });
+
+    this.grid.position.set(center.x, box.min.y - 0.5, center.z);
+    this.controls.target.copy(center);
+    this.camera.position.set(center.x + radius, center.y + radius * 0.8, center.z + radius);
+    this.camera.near = Math.max(radius / 5000, 0.01);
+    this.camera.far = radius * 50;
+    this.camera.updateProjectionMatrix();
+    this.controls.update();
+
+    this.doc$('v3dStats').innerHTML =
+      '<span>' + verts.toLocaleString() + '</span> vértices &middot; ' +
+      '<span>' + Math.round(tris).toLocaleString() + '</span> triángulos &middot; modelo importado';
+    this.doc$('v3dLoading').style.display = 'none';
+  }
+
+  _setMissionControls(enabled) {
+    for (const id of ['v3dRoof', 'v3dPath', 'v3dSizeWrap', 'v3dLevelWrap']) {
+      const el = this.doc$(id);
+      if (el) el.style.display = enabled ? '' : 'none';
+    }
   }
 
   async _refreshMap() {

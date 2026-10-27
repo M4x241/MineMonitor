@@ -64,6 +64,17 @@ async def patch_mine(mine_id: int, body: MinePatch, db=Depends(get_db),
 
 @router.delete("/{mine_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_mine(mine_id: int, db=Depends(get_db), _=Depends(get_current_user)):
-    await _get_mine_or_404(db, mine_id)
-    await db.execute("DELETE FROM mines WHERE id = ?", (mine_id,))
+    # Eliminar dependencias explícitamente para asegurar limpieza completa
+    await db.execute(
+        "DELETE FROM voxeles WHERE mission_id IN (SELECT id FROM missions WHERE mine_id = ?)",
+        (mine_id,),
+    )
+    await db.execute(
+        "DELETE FROM exploration_state WHERE mission_id IN (SELECT id FROM missions WHERE mine_id = ?)",
+        (mine_id,),
+    )
+    await db.execute("DELETE FROM missions WHERE mine_id = ?", (mine_id,))
+    res = await db.execute("DELETE FROM mines WHERE id = ?", (mine_id,))
     await db.commit()
+    if res.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Mina no encontrada")

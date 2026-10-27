@@ -137,6 +137,12 @@
   }
   .ghost-btn:hover { border-color: #4af; color: #fff; }
 
+  .import-btn {
+    margin-left: 0; width: 100%; margin-top: 10px; padding: 10px 14px;
+    border-style: dashed; color: #9ab; font-size: 12px; text-align: center;
+  }
+  .import-btn:hover { border-color: #4af; color: #fff; }
+
   .map-list { display: flex; flex-direction: column; gap: 10px; }
   .map-card {
     display: flex; align-items: center; background: #12121a; border: 1px solid #222;
@@ -191,6 +197,13 @@
     border-radius: 6px; font-size: 12px; white-space: nowrap; margin-right: 4px;
   }
   .switch-btn:hover { background: #1a3a5c; color: #fff; }
+  .export-select {
+    background: #15151d; border: 1px solid #444; color: #cfc; padding: 8px 10px;
+    border-radius: 6px; font-size: 12px; white-space: nowrap; margin-right: 4px;
+    outline: none; cursor: pointer;
+  }
+  .export-select:hover { border-color: #4af; }
+  .export-select:disabled { opacity: 0.5; cursor: progress; }
   .drone-pill {
     display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: #888;
     border: 1px solid #333; border-radius: 12px; padding: 3px 10px; background: #15151d;
@@ -224,6 +237,39 @@
   }
   .modal-actions button.primary { background: #1a3a5c; border-color: #4af; color: #fff; }
   .modal-actions button:hover { border-color: #4af; }
+
+  /* ── Import browser ───────────────────────── */
+  #importOverlay {
+    position: absolute; inset: 0; z-index: 85; background: rgba(0,0,0,0.65);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .import-modal { width: 560px; max-width: 92vw; }
+  .import-hint { font-size: 12px; color: #888; margin-bottom: 12px; }
+  .import-path { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .import-dir {
+    flex: 1; font-size: 11px; color: #9ab; background: #0d0d12; border: 1px solid #262633;
+    padding: 7px 10px; border-radius: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    direction: rtl; text-align: left;
+  }
+  .import-list {
+    height: 320px; overflow-y: auto; background: #0d0d12; border: 1px solid #262633;
+    border-radius: 8px; padding: 4px;
+  }
+  .import-row {
+    display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 6px;
+    font-size: 13px; color: #ccc; cursor: pointer;
+  }
+  .import-row:hover { background: #171722; }
+  .import-row.dir { color: #6cf; font-weight: 600; }
+  .import-row.disabled { color: #555; cursor: not-allowed; }
+  .import-row.sel { background: #1a3a5c; color: #fff; }
+  .import-row .ic { width: 16px; text-align: center; flex-shrink: 0; }
+  .import-row .sz { margin-left: auto; font-size: 11px; color: #667; }
+  .import-actions { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
+  .import-sel { font-size: 12px; color: #7a7; }
+  .import-actions button { padding: 9px 16px; border-radius: 6px; font-size: 12px; border: 1px solid #333; background: #15151d; color: #ccc; }
+  .import-actions button.primary { background: #1a3a5c; border-color: #4af; color: #fff; }
+  .import-actions button:hover { border-color: #4af; }
 
   /* ── Viewer overlay ───────────────────────── */
   #viewerOverlay { position: absolute; inset: 36px 0 0 0; z-index: 50; background: #0a0a0f; }
@@ -342,6 +388,7 @@
 
     <aside class="left-panel">
       <button id="newExplorationBtn" class="big-primary"><span class="plus">+</span>INICIAR NUEVA EXPLORACIÓN</button>
+      <button id="importMeshBtn" class="ghost-btn import-btn" title="Abrir un PLY u OBJ externo solo para verlo en 3D (no crea misión)">⬆ Importar modelo 3D (PLY / OBJ)</button>
       <div class="mini-card">
         <h4>ESTADÍSTICAS</h4>
         <div style="display:flex;gap:18px">
@@ -400,9 +447,53 @@
   </div>
 </div>
 
+<!-- ── Modal gestionar minas ── -->
+<div id="minesOverlay" class="hidden">
+  <div class="modal" style="max-width: 560px; width: 90vw;">
+    <h3>Gestionar minas</h3>
+    <p style="color:#9aa; font-size:12px; margin-top:-4px;">Elimina una mina. Se borrarán también sus misiones, voxeles y checkpoints asociados si no son necesarios para otras.</p>
+    <div id="minesList" style="max-height: 320px; overflow-y: auto; margin-top: 10px; display:flex; flex-direction:column; gap:8px;"></div>
+    <p id="minesMsg" class="msg"></p>
+    <div class="modal-actions">
+      <button id="minesClose">Cerrar</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Modal confirmación eliminar mina ── -->
+<div id="deleteMineConfirmOverlay" class="hidden">
+  <div class="modal" style="max-width: 420px;">
+    <h3>Confirmar eliminación</h3>
+    <p id="deleteMineConfirmText" style="color:#ddd; font-size:13px; line-height:1.5;"></p>
+    <p style="color:#f66; font-size:12px;">Esta acción no se puede deshacer.</p>
+    <div class="modal-actions">
+      <button id="deleteMineCancel">Cancelar</button>
+      <button id="deleteMineConfirmBtn" class="primary" style="background:#b33; border-color:#b33;">Eliminar definitivamente</button>
+    </div>
+  </div>
+</div>
+
 <!-- ── Viewer 3D ── -->
 <div id="viewerOverlay" class="hidden">
   <div id="viewerContainer"></div>
+</div>
+
+<!-- ── Modal importar modelo 3D ── -->
+<div id="importOverlay" class="hidden">
+  <div class="modal import-modal">
+    <h3>Importar modelo 3D</h3>
+    <p class="import-hint">Elige un <b>.ply</b> o <b>.obj</b> (y opcionalmente su <b>.mtl</b>). Solo se visualiza: no crea ninguna misión.</p>
+    <div class="import-path">
+      <button id="importUp" class="ghost-btn" style="margin-left:0">↑ Subir</button>
+      <span id="importDir" class="import-dir">…</span>
+    </div>
+    <div id="importList" class="import-list"></div>
+    <div class="import-actions">
+      <span id="importSel" class="import-sel"></span>
+      <button id="importCancel" class="ghost-btn" style="margin-left:auto">Cancelar</button>
+      <button id="importOpen" class="primary">Importar y ver</button>
+    </div>
+  </div>
 </div>
 
 <script type="importmap">
@@ -584,13 +675,20 @@ function renderMissionList() {
       ((m.status === 'in_progress' || m.status === 'paused') ? '<button class="stop-btn">Finalizar</button>' : '') +
       ((m.status === 'paused' || m.status === 'completed')
           ? '<button class="switch-btn" title="Cargar esa mina en Minecraft (sin explorar)">Ver en Minecraft</button>' : '') +
+      '<select class="export-select" title="Exportar resultados">' +
+        '<option value="">Exportar…</option>' +
+        '<option value="csv">CSV</option>' +
+        '<option value="ply">PLY (nube)</option>' +
+        '<option value="ply?mode=mesh">PLY (malla)</option>' +
+        '<option value="obj">OBJ</option>' +
+        '<option value="png">PNG (entropía)</option>' +
+        '<option value="pdf">PDF (reporte)</option>' +
+      '</select>' +
       '<button class="view3d-btn">Ver en 3D</button>';
     card.querySelector('.map-name').textContent = m.name || ('Misión ' + m.id);
     let meta = '<span class="badge ' + m.status + '">' + (STATUS_LABELS[m.status] || m.status.replace(/_/g, ' ')) + '</span>' +
       'Mina: ' + (m.mine_name || 'Mina ' + m.mine_id);
-    if (typeof m.coverage_percent === 'number') meta += '<span class="metric">Cob. ' + m.coverage_percent + '%</span>';
-    if (m.risk_detections) meta += '<span class="metric">Riesgo ' + m.risk_detections + '</span>';
-    if (typeof m.final_entropy === 'number') meta += '<span class="metric">Entropía ' + m.final_entropy + '</span>';
+    if (m.risk_detections !== null && m.risk_detections !== undefined) meta += '<span class="metric">Riesgo ' + m.risk_detections + '</span>';
     card.querySelector('.map-meta').innerHTML = meta;
     if (m.status === 'pending') {
       card.querySelector('.start-btn').addEventListener('click', () => startMissionFromCard(m.id));
@@ -608,7 +706,43 @@ function renderMissionList() {
       card.querySelector('.switch-btn').addEventListener('click', () => switchMissionFromCard(m.id));
     }
     card.querySelector('.view3d-btn').addEventListener('click', () => openViewer(m.id, m.name));
+    const exportSel = card.querySelector('.export-select');
+    exportSel.addEventListener('change', () => exportMissionFromCard(m.id, exportSel));
+    const delBtn = document.createElement('button');
+    delBtn.className = 'ghost-btn';
+    delBtn.title = 'Eliminar mina';
+    delBtn.textContent = '🗑';
+    delBtn.style.color = '#f66';
+    delBtn.style.borderColor = '#533';
+    delBtn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); deleteMineFromMission(m); });
+    card.appendChild(delBtn);
     list.appendChild(card);
+  }
+}
+
+async function exportMissionFromCard(missionId, selectEl) {
+  const raw = selectEl.value;
+  if (!raw) return;
+  const [format, query] = raw.split('|');
+  selectEl.disabled = true;
+  selectEl.title = 'Generando exportación…';
+  try {
+    const r = await window.electronAPI.exportMission({
+      missionId, format, query: query || '', token: state.token,
+    });
+    if (r?.canceled) {
+      /* el usuario canceló el diálogo */
+    } else if (r?.error) {
+      alert('No se pudo exportar: ' + r.error);
+    } else if (r?.saved) {
+      alert('Exportado en:\n' + r.path);
+    }
+  } catch (e) {
+    alert('Error al exportar: ' + (e.message || e));
+  } finally {
+    selectEl.disabled = false;
+    selectEl.value = '';
+    selectEl.title = 'Exportar resultados';
   }
 }
 
@@ -652,6 +786,14 @@ async function stopMissionFromCard(missionId) {
 async function switchMissionFromCard(missionId) {
   const r = await apiFetch('/missions/' + missionId + '/switch', { method: 'POST' });
   if (r.status === 200) {
+    try {
+      if (window.electronAPI && window.electronAPI.launchPrism) {
+        await window.electronAPI.launchPrism();
+      }
+    } catch (e) {
+      // ignore
+    }
+    alert('Mapa cargado. Se ha abierto Prism Launcher.');
     await updateDroneStatus();
   } else {
     alert(r.data?.detail || 'No se pudo cargar el mapa en Minecraft');
@@ -699,6 +841,102 @@ function closeViewer() {
   $('appView').classList.remove('hidden');
 }
 
+async function importModel3D() {
+  const home = await window.electronAPI.homeDirs();
+  state.import = { dir: home.start, selected: new Set(), entries: [] };
+  $('importOverlay').classList.remove('hidden');
+  await browseTo(home.start);
+}
+
+async function browseTo(dir) {
+  const r = await window.electronAPI.listDir(dir);
+  if (r.error) { alert(r.error); return; }
+  state.import.dir = r.dir;
+  state.import.parent = r.parent;
+  state.import.entries = r.entries;
+  state.import.selected.clear();
+  renderImportList();
+}
+
+function renderImportList() {
+  const list = $('importList');
+  const imp = state.import;
+  $('importDir').textContent = imp.dir;
+  $('importUp').disabled = !imp.parent;
+  list.innerHTML = '';
+
+  const allowed = new Set(['ply', 'obj', 'mtl']);
+  for (const e of imp.entries) {
+    const isModel = !e.dir && allowed.has(e.ext);
+    const row = document.createElement('div');
+    row.className = 'import-row' + (e.dir ? ' dir' : (isModel ? '' : ' disabled'));
+    const icon = e.dir ? '📁' : (isModel ? '🧊' : '📄');
+    const size = e.dir ? '' : '<span class="sz">' + fmtBytes(e.size) + '</span>';
+    row.innerHTML = '<span class="ic">' + icon + '</span><span>' + e.name + '</span>' + size;
+    if (e.dir) {
+      row.addEventListener('click', () => browseTo(e.path));
+    } else if (isModel) {
+      row.addEventListener('click', () => {
+        if (imp.selected.has(e.path)) imp.selected.delete(e.path);
+        else imp.selected.add(e.path);
+        renderImportList();
+      });
+      if (imp.selected.has(e.path)) row.classList.add('sel');
+    }
+    list.appendChild(row);
+  }
+
+  if (!imp.entries.length) {
+    list.innerHTML = '<div class="import-row disabled">(carpeta vacía)</div>';
+  }
+  const n = imp.selected.size;
+  $('importSel').textContent = n ? n + ' archivo(s) seleccionado(s)' : 'Nada seleccionado';
+  $('importOpen').disabled = n === 0;
+}
+
+function fmtBytes(n) {
+  if (!n) return '0 B';
+  const u = ['B', 'KB', 'MB', 'GB'];
+  let i = 0;
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return n.toFixed(n < 10 && i > 0 ? 1 : 0) + ' ' + u[i];
+}
+
+async function confirmImport() {
+  const imp = state.import;
+  if (!imp || !imp.selected.size) return;
+  const files = [];
+  for (const p of imp.selected) {
+    const r = await window.electronAPI.readFile(p);
+    if (r.error) { alert(r.error); return; }
+    files.push(r);
+  }
+  $('importOverlay').classList.add('hidden');
+  await showExternalModel(files);
+}
+
+async function showExternalModel(files) {
+  $('appView').classList.add('hidden');
+  $('viewerOverlay').classList.remove('hidden');
+  if (state.viewer) { state.viewer.dispose(); state.viewer = null; }
+  const viewer = new Viewer3D($('viewerContainer'), apiFetch);
+  viewer.onBack = closeViewer;
+  state.viewer = viewer;
+  await viewer.loadExternal(files || []);
+}
+
+async function importFromDrop(paths) {
+  const files = [];
+  for (const p of paths) {
+    if (!/\.(ply|obj|mtl)$/i.test(p)) continue;
+    const r = await window.electronAPI.readFile(p);
+    if (r.error) { alert(r.error); return; }
+    files.push(r);
+  }
+  if (!files.length) { alert('Arrastra un archivo .ply, .obj o .mtl'); return; }
+  await showExternalModel(files);
+}
+
 // ── Nueva exploración ────────────────────────────────
 async function openNewExploration() {
   $('modalMsg').textContent = '';
@@ -742,6 +980,85 @@ async function createMission() {
   }
 }
 
+// ── Gestión de minas ───────────────────────────────
+let mineToDelete = null;
+
+async function loadMinesListLeft() {
+  const listEl = $('minesListLeft');
+  if (!listEl) return;
+  listEl.innerHTML = '<div style="color:#9aa; font-size:11px;">Cargando...</div>';
+  const r = await apiFetch('/mines');
+  if (r.status !== 200 || !Array.isArray(r.data)) {
+    listEl.innerHTML = '<div style="color:#f66; font-size:11px;">Error</div>';
+    return;
+  }
+  if (r.data.length === 0) {
+    listEl.innerHTML = '<div style="color:#9aa; font-size:11px;">Sin minas</div>';
+    return;
+  }
+  listEl.innerHTML = '';
+  for (const mine of r.data) {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:6px; padding:6px 8px; background:#15151c; border:1px solid #2a2a33; border-radius:6px;';
+    row.innerHTML = '<div style="min-width:0;"><div style="color:#eee; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">' + (mine.name || ('Mina ' + mine.id)) + '</div><div style="color:#9aa; font-size:10px;">ID: ' + mine.id + '</div></div>' +
+      '<button title="Eliminar mina" style="background:transparent; border:none; color:#f66; cursor:pointer; padding:2px 4px;">🗑</button>';
+    row.querySelector('button').addEventListener('click', (e) => {
+      e.stopPropagation();
+      confirmDeleteMine(mine);
+    });
+    listEl.appendChild(row);
+  }
+}
+
+function deleteMineFromMission(mission) {
+  const mineId = mission.mine_id;
+  const mineName = mission.mine_name || ('Mina ' + mineId);
+  if (confirm('¿Eliminar la mina "' + mineName + '" (ID ' + mineId + ')?\n\nSe borrarán todas las misiones de esta mina, sus voxeles y checkpoints. Esta acción no se puede deshacer.')) {
+    apiFetch('/mines/' + mineId, { method: 'DELETE' }).then((r) => {
+      loadMissions();
+      if (!(r.status === 204 || r.status === 200)) {
+        // Intentar limpiar también por si queda huérfano
+        alert(r.data?.detail || 'Se ha limpiado lo relacionado con la mina');
+      }
+    }).catch(() => {
+      loadMissions();
+      alert('Se ha actualizado la lista');
+    });
+  }
+}
+
+function confirmDeleteMine(mine) {
+  mineToDelete = mine;
+  $('deleteMineConfirmText').innerHTML = '¿Eliminar la mina <b>' + (mine.name || ('Mina ' + mine.id)) + '</b> (ID ' + mine.id + ')?<br><br>Se eliminarán todas las misiones asociadas a esta mina, sus voxeles grabados y checkpoints de exploración.<br><br>Esta acción no se puede deshacer.';
+  $('deleteMineConfirmOverlay').classList.remove('hidden');
+}
+
+async function deleteMineConfirmed() {
+  if (!mineToDelete) return;
+  const id = mineToDelete.id;
+  const btn = $('deleteMineConfirmBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Eliminando...'; }
+  try {
+    const r = await apiFetch('/mines/' + id, { method: 'DELETE' });
+    if (r.status === 204 || r.status === 200) {
+      const ov = $('deleteMineConfirmOverlay');
+      if (ov) ov.classList.add('hidden');
+      mineToDelete = null;
+      await loadMissions();
+    } else {
+      alert(r.data?.detail || 'No se pudo eliminar la mina');
+      const ov = $('deleteMineConfirmOverlay');
+      if (ov) ov.classList.add('hidden');
+    }
+  } catch (e) {
+    alert('Error al eliminar la mina');
+    const ov = $('deleteMineConfirmOverlay');
+    if (ov) ov.classList.add('hidden');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Eliminar definitivamente'; }
+  }
+}
+
 // ── Boot ─────────────────────────────────────────────
 async function boot() {
   if (!state.token) { showAuth(); return; }
@@ -782,6 +1099,26 @@ document.addEventListener('click', (e) => {
   }
 });
 $('newExplorationBtn').addEventListener('click', openNewExploration);
+$('importMeshBtn').addEventListener('click', importModel3D);
+$('importCancel').addEventListener('click', () => $('importOverlay').classList.add('hidden'));
+$('importUp').addEventListener('click', () => { if (state.import?.parent) browseTo(state.import.parent); });
+$('importOpen').addEventListener('click', confirmImport);
+$('importOverlay').addEventListener('click', (e) => { if (e.target.id === 'importOverlay') $('importOverlay').classList.add('hidden'); });
+$('deleteMineCancel').addEventListener('click', () => { $('deleteMineConfirmOverlay').classList.add('hidden'); mineToDelete = null; });
+$('deleteMineConfirmBtn').addEventListener('click', deleteMineConfirmed);
+$('deleteMineConfirmOverlay').addEventListener('click', (e) => { if (e.target.id === 'deleteMineConfirmOverlay') { $('deleteMineConfirmOverlay').classList.add('hidden'); mineToDelete = null; } });
+
+// Arrastrar y soltar modelos 3D sobre la ventana (sin diálogos nativos)
+document.addEventListener('dragover', (e) => { e.preventDefault(); });
+document.addEventListener('drop', async (e) => {
+  e.preventDefault();
+  const files = Array.from(e.dataTransfer?.files || []);
+  if (!files.length) return;
+  const paths = files.map((f) => {
+    try { return window.electronAPI.getPathForFile(f); } catch { return ''; }
+  }).filter(Boolean);
+  if (paths.length) await importFromDrop(paths);
+});
 $('modalCancel').addEventListener('click', () => $('modalOverlay').classList.add('hidden'));
 $('modalCreate').addEventListener('click', createMission);
 $('modalOverlay').addEventListener('click', (e) => { if (e.target.id === 'modalOverlay') $('modalOverlay').classList.add('hidden'); });

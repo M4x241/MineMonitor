@@ -168,6 +168,22 @@ async def _get_mine_or_404(db, mine_id: int) -> dict:
 @router.get("", response_model=list[MissionOut])
 async def list_missions(status_filter: str | None = None, user=Depends(get_current_user),
                         db=Depends(get_db)):
+    # Limpiar misiones huérfanas (minas eliminadas)
+    await db.execute(
+        """DELETE FROM voxeles WHERE mission_id IN (
+               SELECT m.id FROM missions m WHERE m.mine_id NOT IN (SELECT id FROM mines)
+           )"""
+    )
+    await db.execute(
+        """DELETE FROM exploration_state WHERE mission_id IN (
+               SELECT m.id FROM missions m WHERE m.mine_id NOT IN (SELECT id FROM mines)
+           )"""
+    )
+    await db.execute(
+        "DELETE FROM missions WHERE mine_id NOT IN (SELECT id FROM mines)"
+    )
+    await db.commit()
+
     query = """SELECT m.*, mn.name AS mine_name FROM missions m
                LEFT JOIN mines mn ON mn.id = m.mine_id
                WHERE m.user_id = ?"""
@@ -190,19 +206,6 @@ async def create_mission(body: MissionCreate, user=Depends(get_current_user),
         (body.name, user["id"], body.mine_id, json.dumps(config)),
     )
     mission_id = cur.lastrowid
-
-    sample_voxels = [
-        (mission_id, 0, 0, 0, 1, 0, 0.85, 0.20, 1),
-        (mission_id, 1, 0, 0, 1, 0, 0.90, 0.15, 2),
-        (mission_id, 0, 1, 0, 2, 1, 0.70, 0.80, 3),
-        (mission_id, 0, 0, 1, 1, 0, 0.75, 0.30, 4),
-    ]
-    await db.executemany(
-        """INSERT INTO voxeles (mission_id, coord_x, coord_y, coord_z,
-           state, risk_label, confidence, entropy_value, mission_step)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        sample_voxels,
-    )
     await db.commit()
     _fire_exploration(mission_id, user["id"])
     return MissionOut.model_validate(await _get_mission_or_404(db, mission_id, user["id"]))
@@ -241,6 +244,10 @@ async def patch_mission(mission_id: int, body: MissionPatch, user=Depends(get_cu
 @router.delete("/{mission_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_mission(mission_id: int, user=Depends(get_current_user), db=Depends(get_db)):
     await _get_mission_or_404(db, mission_id, user["id"])
+    # Borra también los voxeles y el checkpoint: si no, quedan misiones huerfanas
+    # que engordan la tabla 'voxeles' (y ralentizan los agregados de /map).
+    await db.execute("DELETE FROM voxeles WHERE mission_id = ?", (mission_id,))
+    await db.execute("DELETE FROM exploration_state WHERE mission_id = ?", (mission_id,))
     await db.execute("DELETE FROM missions WHERE id = ?", (mission_id,))
     await db.commit()
 
@@ -325,11 +332,14 @@ async def switch_mission(mission_id: int, user=Depends(get_current_user), db=Dep
 @router.get("/{mission_id}/map")
 async def get_mission_map(mission_id: int, band: int | None = None,
                           page: int | None = None, size: int = 50000,
+                          since_step: int | None = None,
                           user=Depends(get_current_user), db=Depends(get_db)):
     """Devuelve los voxeles de la mision como JSON 3D.
 
     - band: 0..3 filtra un nivel (banda X del plugin: coord_x/112).
     - page/size: paginacion opcional (size default 50000); sin page devuelve todo.
+    - since_step: solo voxeles con mission_step > since_step (refresh incremental
+      del visor: no vuelve a descargar el mapa entero mientras la exploración sigue).
     """
     mission = await _get_mission_or_404(db, mission_id, user["id"])
     if band is not None and not (0 <= band <= 3):
@@ -341,6 +351,8 @@ async def get_mission_map(mission_id: int, band: int | None = None,
         where += " AND MIN(3, MAX(0, coord_x / 112)) = ?"
         params.append(band)
 
+    # Totales/bounds SIEMPRE de la selección completa (no de since_step) para que
+    # el visor conserve el recuento global aunque pida solo lo nuevo.
     cur = await db.execute(
         f"""SELECT COUNT(*) AS n,
                    MIN(coord_x) AS minx, MAX(coord_x) AS maxx,
@@ -359,14 +371,20 @@ async def get_mission_map(mission_id: int, band: int | None = None,
             "max": {"x": agg["maxx"], "y": agg["maxy"], "z": agg["maxz"]},
         }
 
+    # where/params que se usan para el SELECT (pueden añadir since_step).
+    sel_where, sel_params = where, list(params)
+    if since_step is not None:
+        sel_where += " AND mission_step > ?"
+        sel_params.append(since_step)
+
     has_more = False
     if page is None:
         cur = await db.execute(
             f"""SELECT coord_x, coord_y, coord_z, state, risk_label,
                        confidence, entropy_value, mission_step
-                FROM voxeles {where}
+                FROM voxeles {sel_where}
                 ORDER BY coord_x, coord_y, coord_z""",
-            params,
+            sel_params,
         )
         rows = await cur.fetchall()
     else:
@@ -376,9 +394,9 @@ async def get_mission_map(mission_id: int, band: int | None = None,
         cur = await db.execute(
             f"""SELECT coord_x, coord_y, coord_z, state, risk_label,
                        confidence, entropy_value, mission_step
-                FROM voxeles {where}
+                FROM voxeles {sel_where}
                 ORDER BY coord_x, coord_y, coord_z LIMIT ? OFFSET ?""",
-            params + [size + 1, offset],
+            sel_params + [size + 1, offset],
         )
         rows = await cur.fetchall()
         has_more = len(rows) > size

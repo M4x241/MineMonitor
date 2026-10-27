@@ -8,15 +8,47 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 log = logging.getLogger("settings")
 
-_JWT_SECRET_ENV = os.getenv("JWT_SECRET")
-if _JWT_SECRET_ENV:
-    jwt_secret = _JWT_SECRET_ENV
-else:
-    jwt_secret = secrets.token_urlsafe(48)
-    log.warning(
-        "JWT_SECRET no definido en el entorno; se genera un secreto aleatorio "
-        "por proceso (los tokens no sobreviven a un reinicio del backend)."
-    )
+
+def _load_dotenv(path: Path) -> None:
+    """Carga variables KEY=VALUE del primer .env que exista (sin sobrescribir env)."""
+    if not path.is_file():
+        return
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+ENV_FILE = BASE_DIR / ".env"
+_load_dotenv(ENV_FILE)
+_load_dotenv(BASE_DIR.parent / ".env")
+
+
+def _jwt_secret_persistent() -> str:
+    """JWT_SECRET de la env/.env; si no existe, se genera y se persiste en .env
+    para que los tokens sigan siendo válidos tras reiniciar el backend."""
+    cached = os.getenv("JWT_SECRET")
+    if cached:
+        return cached
+    token = secrets.token_urlsafe(48)
+    try:
+        existing = ENV_FILE.read_text() if ENV_FILE.is_file() else ""
+        with open(ENV_FILE, "a", encoding="utf-8") as fh:
+            if existing and not existing.endswith("\n"):
+                fh.write("\n")
+            fh.write(f"JWT_SECRET={token}\n")
+        log.info("JWT_SECRET generado y persistido en %s", ENV_FILE)
+    except OSError as exc:
+        log.warning("No se pudo persistir JWT_SECRET en %s: %s", ENV_FILE, exc)
+    return token
+
+
+jwt_secret = _jwt_secret_persistent()
 
 
 @dataclass(frozen=True)

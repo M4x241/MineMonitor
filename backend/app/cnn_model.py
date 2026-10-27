@@ -38,20 +38,33 @@ def group_for_material(material: str) -> int:
     return MATERIAL_GROUPS.get((material or "STONE").upper(), 7)
 
 
+def _build_index(blocks):
+    """Construye un dict por clave (x,y,z) para lookup O(1)."""
+    idx = {}
+    for b in blocks:
+        idx[(b["x"], b["y"], b["z"])] = b.get("material", "STONE")
+    return idx
+
+
 def build_grid(blocks, cx: int, cy: int, cz: int, d: int = PATCH) -> np.ndarray:
     """Grid (d,d,d) de índices de grupo alrededor del bloque central (cx,cy,cz).
 
-    'blocks' debe incluir al menos el cubo [cx±half, cy±half, cz±half]; las
-    celdas fuera quedan como grupo 7 (desconocido).
+    Acepta lista o dict indexado por (x,y,z). O(N) pasa a O(d^3).
     """
     half = d // 2
     grid = np.full((d, d, d), 7, dtype=np.int64)
-    for b in blocks:
-        dx = b["x"] - cx
-        dy = b["y"] - cy
-        dz = b["z"] - cz
-        if 0 <= dx + half < d and 0 <= dy + half < d and 0 <= dz + half < d:
-            grid[dx + half, dy + half, dz + half] = group_for_material(b.get("material", "STONE"))
+    # intentar indexar
+    if isinstance(blocks, dict):
+        idx = blocks
+    else:
+        idx = _build_index(blocks)
+    for dx in range(-half, half + 1):
+        for dy in range(-half, half + 1):
+            for dz in range(-half, half + 1):
+                m = idx.get((cx + dx, cy + dy, cz + dz))
+                if m is not None:
+                    ix = dx + half; iy = dy + half; iz = dz + half
+                    grid[ix, iy, iz] = group_for_material(m)
     return grid
 
 

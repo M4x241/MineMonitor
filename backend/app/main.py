@@ -1,14 +1,10 @@
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 
 from .db import init_db_sync, reconcile_on_startup
-from .routers import auth, mc, mines, missions
-
-STATIC_DIR = Path(__file__).parent.parent / "static"
+from .routers import auth, exports, mc, mines, missions
 
 
 @asynccontextmanager
@@ -28,7 +24,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://127.0.0.1:8000", "http://localhost:8000"],
+    allow_origins=["*"],
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -37,13 +33,10 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(mines.router)
 app.include_router(missions.router)
+app.include_router(exports.router)
 app.include_router(mc.router)
 
 
 @app.get("/health")
 async def health():
     return {"status": "ok"}
-
-
-if STATIC_DIR.exists():
-    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")

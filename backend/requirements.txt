@@ -7,3 +7,4 @@ aiosqlite>=0.20
 pydantic[email]>=2.9
 numpy>=1.26
 torch>=2.2
+matplotlib>=3.8
